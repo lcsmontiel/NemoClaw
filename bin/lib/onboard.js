@@ -61,6 +61,35 @@ function shellQuote(value) {
   return `'${String(value).replace(/'/g, `'\\''`)}'`;
 }
 
+function buildSandboxConfigSyncScript(selectionConfig) {
+  return `
+set -euo pipefail
+mkdir -p ~/.nemoclaw ~/.openclaw
+cat > ~/.nemoclaw/config.json <<'EOF_NEMOCLAW_CFG'
+${JSON.stringify(selectionConfig, null, 2)}
+EOF_NEMOCLAW_CFG
+python3 - <<'PYCFG'
+import json
+import os
+
+cfg_path = os.path.expanduser('~/.openclaw/openclaw.json')
+cfg = {}
+if os.path.exists(cfg_path):
+    with open(cfg_path) as f:
+        cfg = json.load(f)
+
+cfg.setdefault('agents', {}).setdefault('defaults', {}).setdefault('model', {})['primary'] = ${JSON.stringify(selectionConfig.model)}
+
+with open(cfg_path, 'w') as f:
+    json.dump(cfg, f, indent=2)
+
+os.chmod(cfg_path, 0o600)
+PYCFG
+openclaw models set ${shellQuote(selectionConfig.model)} > /dev/null 2>&1 || true
+exit
+`.trim();
+}
+
 function isDockerRunning() {
   try {
     runCapture("docker info", { ignoreError: false });
@@ -637,32 +666,10 @@ async function setupOpenclaw(sandboxName, model, provider) {
       ...selectionConfig,
       onboardedAt: new Date().toISOString(),
     };
-    const command = `
-set -euo pipefail
-mkdir -p ~/.nemoclaw ~/.openclaw
-cat > ~/.nemoclaw/config.json <<'EOF_NEMOCLAW_CFG'
-${JSON.stringify(sandboxConfig, null, 2)}
-EOF_NEMOCLAW_CFG
-python3 - <<'PYCFG'
-import json
-import os
-
-cfg_path = os.path.expanduser('~/.openclaw/openclaw.json')
-cfg = {}
-if os.path.exists(cfg_path):
-    with open(cfg_path) as f:
-        cfg = json.load(f)
-
-cfg.setdefault('agents', {}).setdefault('defaults', {}).setdefault('model', {})['primary'] = ${JSON.stringify(sandboxConfig.model)}
-
-with open(cfg_path, 'w') as f:
-    json.dump(cfg, f, indent=2)
-
-os.chmod(cfg_path, 0o600)
-PYCFG
-openclaw models set ${shellQuote(sandboxConfig.model)} > /dev/null 2>&1 || true
-`;
-    run(`openshell sandbox connect "${sandboxName}" -- bash -lc ${shellQuote(command)}`);
+    const script = buildSandboxConfigSyncScript(sandboxConfig);
+    run(`cat <<'EOF_NEMOCLAW_SYNC' | openshell sandbox connect "${sandboxName}"
+${script}
+EOF_NEMOCLAW_SYNC`);
   }
 
   console.log("  ✓ OpenClaw gateway launched inside sandbox");
@@ -824,4 +831,4 @@ async function onboard(opts = {}) {
   printDashboard(sandboxName, model, provider);
 }
 
-module.exports = { onboard };
+module.exports = { buildSandboxConfigSyncScript, onboard };
