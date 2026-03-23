@@ -83,7 +83,7 @@ If `nemoclaw` is not found after install, run `source ~/.bashrc` (or `source ~/.
 
 When the install completes, a summary confirms the running environment:
 
-```
+```text
 ──────────────────────────────────────────────────
 Sandbox      my-assistant (Landlock + seccomp + netns)
 Model        nvidia/nemotron-3-super-120b-a12b (NVIDIA Endpoint API)
@@ -241,7 +241,7 @@ Run these on the host to set up, connect to, and manage sandboxes.
 | `openshell term`                     | Launch the OpenShell TUI for monitoring and approvals. |
 | `nemoclaw start` / `stop` / `status` | Manage auxiliary services (Telegram bridge, tunnel).   |
 
-See the full [CLI reference](https://docs.nvidia.com/nemoclaw/latest/reference/commands.md) for all commands, flags, and options.
+See the full [CLI reference](https://docs.nvidia.com/nemoclaw/latest/reference/commands.html) for all commands, flags, and options.
 
 ---
 

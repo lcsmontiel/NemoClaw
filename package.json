@@ -8,7 +8,7 @@
   },
   "scripts": {
     "test": "vitest run",
-    "prepare": "husky || true",
+    "prepare": "if [ -d .git ]; then prek install; fi",
     "prepublishOnly": "cd nemoclaw && env -u npm_config_global -u npm_config_prefix -u npm_config_omit npm install --ignore-scripts && ./node_modules/.bin/tsc"
   },
   "dependencies": {
@@ -27,35 +27,17 @@
     ".dockerignore"
   ],
   "engines": {
-    "node": ">=20.0.0"
+    "node": ">=22.0.0"
   },
   "repository": {
     "type": "git",
     "url": "https://github.com/NVIDIA/NemoClaw.git"
   },
-  "lint-staged": {
-    "nemoclaw/src/**/*.ts": [
-      "bash scripts/check-spdx-headers.sh",
-      "sh -c 'cd nemoclaw && npx eslint --fix \"$@\"' _",
-      "sh -c 'cd nemoclaw && npx prettier --write \"$@\"' _"
-    ],
-    "nemoclaw-blueprint/**/*.py": [
-      "bash scripts/check-spdx-headers.sh",
-      "uvx ruff check --fix",
-      "uvx ruff format"
-    ],
-    "**/*.sh": [
-      "bash scripts/check-spdx-headers.sh",
-      "npx shellcheck"
-    ],
-    ".husky/{pre-commit,pre-push,commit-msg}": "npx shellcheck"
-  },
   "devDependencies": {
     "@commitlint/cli": "^20.5.0",
     "@commitlint/config-conventional": "^20.5.0",
-    "husky": "^9.1.7",
-    "lint-staged": "^16.4.0",
-    "shellcheck": "^4.1.0",
-    "vitest": "^3.1.1"
+    "@j178/prek": "^0.3.6",
+    "@vitest/coverage-v8": "^4.1.0",
+    "vitest": "^4.1.0"
   }
 }

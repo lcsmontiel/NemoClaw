@@ -1,16 +1,18 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-const fs = require("fs");
-const os = require("os");
-const path = require("path");
+import { describe, it, expect } from "vitest";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 
-const {
+import {
   buildSandboxConfigSyncScript,
+  getFutureShellPathHint,
   getInstalledOpenshellVersion,
   getStableGatewayImageRef,
   writeSandboxConfigSyncFile,
-} = require("../bin/lib/onboard");
+} from "../bin/lib/onboard";
 
 describe("onboard helpers", () => {
   it("builds a sandbox sync script that only writes nemoclaw config", () => {
@@ -44,6 +46,18 @@ describe("onboard helpers", () => {
     expect(getStableGatewayImageRef("openshell 0.0.12")).toBe("ghcr.io/nvidia/openshell/cluster:0.0.12");
     expect(getStableGatewayImageRef("openshell 0.0.13-dev.8+gbbcaed2ea")).toBe("ghcr.io/nvidia/openshell/cluster:0.0.13");
     expect(getStableGatewayImageRef("bogus")).toBe(null);
+  });
+
+  it("returns a future-shell PATH hint for user-local openshell installs", () => {
+    expect(getFutureShellPathHint("/home/test/.local/bin", "/usr/local/bin:/usr/bin")).toBe(
+      'export PATH="/home/test/.local/bin:$PATH"'
+    );
+  });
+
+  it("skips the future-shell PATH hint when the bin dir is already on PATH", () => {
+    expect(
+      getFutureShellPathHint("/home/test/.local/bin", "/home/test/.local/bin:/usr/local/bin:/usr/bin")
+    ).toBe(null);
   });
 
   it("writes sandbox sync scripts to a temp file for stdin redirection", () => {

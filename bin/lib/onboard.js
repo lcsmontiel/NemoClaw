@@ -250,6 +250,13 @@ function isOpenshellInstalled() {
   }
 }
 
+function getFutureShellPathHint(binDir, pathValue = process.env.PATH || "") {
+  if (String(pathValue).split(path.delimiter).includes(binDir)) {
+    return null;
+  }
+  return `export PATH="${binDir}:$PATH"`;
+}
+
 function installOpenshell() {
   const result = spawnSync("bash", [path.join(SCRIPTS, "install-openshell.sh")], {
     cwd: ROOT,
@@ -262,13 +269,21 @@ function installOpenshell() {
     if (output) {
       console.error(output);
     }
-    return false;
+    return { installed: false, localBin: null, futureShellPathHint: null };
   }
   const localBin = process.env.XDG_BIN_HOME || path.join(process.env.HOME || "", ".local", "bin");
-  if (fs.existsSync(path.join(localBin, "openshell")) && !process.env.PATH.split(path.delimiter).includes(localBin)) {
+  const openshellPath = path.join(localBin, "openshell");
+  const futureShellPathHint = fs.existsSync(openshellPath)
+    ? getFutureShellPathHint(localBin, process.env.PATH)
+    : null;
+  if (fs.existsSync(openshellPath) && futureShellPathHint) {
     process.env.PATH = `${localBin}${path.delimiter}${process.env.PATH}`;
   }
-  return isOpenshellInstalled();
+  return {
+    installed: isOpenshellInstalled(),
+    localBin,
+    futureShellPathHint,
+  };
 }
 
 function sleep(seconds) {
@@ -344,15 +359,22 @@ async function preflight() {
   }
 
   // OpenShell CLI
+  let openshellInstall = { localBin: null, futureShellPathHint: null };
   if (!isOpenshellInstalled()) {
     console.log("  openshell CLI not found. Installing...");
-    if (!installOpenshell()) {
+    openshellInstall = installOpenshell();
+    if (!openshellInstall.installed) {
       console.error("  Failed to install openshell CLI.");
       console.error("  Install manually: https://github.com/NVIDIA/OpenShell/releases");
       process.exit(1);
     }
   }
   console.log(`  ✓ openshell CLI: ${runCapture("openshell --version 2>/dev/null || echo unknown", { ignoreError: true })}`);
+  if (openshellInstall.futureShellPathHint) {
+    console.log(`  Note: openshell was installed to ${openshellInstall.localBin} for this onboarding run.`);
+    console.log(`  Future shells may still need: ${openshellInstall.futureShellPathHint}`);
+    console.log("  Add that export to your shell profile, or open a new terminal before running openshell directly.");
+  }
 
   // Clean up stale NemoClaw session before checking ports.
   // A previous onboard run may have left the gateway container and port
@@ -783,7 +805,25 @@ async function setupNim(sandboxName, gpu) {
     } else if (selected.key === "vllm") {
       console.log("  ✓ Using existing vLLM on localhost:8000");
       provider = "vllm-local";
-      model = "vllm-local";
+      // Query vLLM for the actual model ID
+      const vllmModelsRaw = runCapture("curl -sf http://localhost:8000/v1/models 2>/dev/null", { ignoreError: true });
+      try {
+        const vllmModels = JSON.parse(vllmModelsRaw);
+        if (vllmModels.data && vllmModels.data.length > 0) {
+          model = vllmModels.data[0].id;
+          if (!isSafeModelId(model)) {
+            console.error(`  Detected model ID contains invalid characters: ${model}`);
+            process.exit(1);
+          }
+          console.log(`  Detected model: ${model}`);
+        } else {
+          console.error("  Could not detect model from vLLM. Please specify manually.");
+          process.exit(1);
+        }
+      } catch {
+        console.error("  Could not query vLLM models endpoint. Is vLLM running on localhost:8000?");
+        process.exit(1);
+      }
     }
     // else: cloud — fall through to default below
   }
@@ -818,7 +858,7 @@ async function setupInference(sandboxName, model, provider) {
     // Create nvidia-nim provider
     run(
       `openshell provider create --name nvidia-nim --type openai ` +
-      `--credential ${shellQuote("NVIDIA_API_KEY=" + process.env.NVIDIA_API_KEY)} ` +
+      `--credential ${shellQuote("NVIDIA_API_KEY")} ` +
       `--config "OPENAI_BASE_URL=https://integrate.api.nvidia.com/v1" 2>&1 || true`,
       { ignoreError: true }
     );
@@ -834,10 +874,12 @@ async function setupInference(sandboxName, model, provider) {
     }
     const baseUrl = getLocalProviderBaseUrl(provider);
     run(
+      `OPENAI_API_KEY=dummy ` +
       `openshell provider create --name vllm-local --type openai ` +
-      `--credential "OPENAI_API_KEY=dummy" ` +
+      `--credential "OPENAI_API_KEY" ` +
       `--config "OPENAI_BASE_URL=${baseUrl}" 2>&1 || ` +
-      `openshell provider update vllm-local --credential "OPENAI_API_KEY=dummy" ` +
+      `OPENAI_API_KEY=dummy ` +
+      `openshell provider update vllm-local --credential "OPENAI_API_KEY" ` +
       `--config "OPENAI_BASE_URL=${baseUrl}" 2>&1 || true`,
       { ignoreError: true }
     );
@@ -854,10 +896,12 @@ async function setupInference(sandboxName, model, provider) {
     }
     const baseUrl = getLocalProviderBaseUrl(provider);
     run(
+      `OPENAI_API_KEY=ollama ` +
       `openshell provider create --name ollama-local --type openai ` +
-      `--credential "OPENAI_API_KEY=ollama" ` +
+      `--credential "OPENAI_API_KEY" ` +
       `--config "OPENAI_BASE_URL=${baseUrl}" 2>&1 || ` +
-      `openshell provider update ollama-local --credential "OPENAI_API_KEY=ollama" ` +
+      `OPENAI_API_KEY=ollama ` +
+      `openshell provider update ollama-local --credential "OPENAI_API_KEY" ` +
       `--config "OPENAI_BASE_URL=${baseUrl}" 2>&1 || true`,
       { ignoreError: true }
     );
@@ -1096,6 +1140,7 @@ function startMessagingBridges(sandboxName) {
 
 module.exports = {
   buildSandboxConfigSyncScript,
+  getFutureShellPathHint,
   getInstalledOpenshellVersion,
   getStableGatewayImageRef,
   hasStaleGateway,
