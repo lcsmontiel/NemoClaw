@@ -10,4 +10,4 @@ format:
 check:
 	ruff check .
 	ruff format --check .
-	uv run --with pyright pyright .
+	uv run --extra dev --with pyright pyright .

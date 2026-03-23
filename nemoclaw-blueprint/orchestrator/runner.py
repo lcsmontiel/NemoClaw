@@ -52,7 +52,7 @@ _PRIVATE_NETWORKS = (
 _ALLOWED_SCHEMES = ("https", "http")
 
 
-def _is_private_ip(addr_str: str) -> bool:
+def is_private_ip(addr_str: str) -> bool:
     """Return True if *addr_str* belongs to a private/internal network."""
     try:
         addr = ipaddress.ip_address(addr_str)
@@ -91,8 +91,8 @@ def validate_endpoint_url(url: str) -> str:
         raise ValueError(f"Cannot resolve hostname '{hostname}': {exc}") from exc
 
     for _family, _type, _proto, _canonname, sockaddr in addr_infos:
-        ip_str = sockaddr[0]
-        if _is_private_ip(ip_str):
+        ip_str = str(sockaddr[0])
+        if is_private_ip(ip_str):
             raise ValueError(
                 f"Endpoint URL resolves to private/internal address {ip_str}. "
                 "Connections to internal networks are not allowed."
