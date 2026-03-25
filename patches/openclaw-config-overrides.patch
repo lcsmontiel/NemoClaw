@@ -1,0 +1,44 @@
+--- a/dist/io-CZZeeo8R.js
++++ b/dist/io-CZZeeo8R.js
+@@ -6856,8 +6856,30 @@
+ 		}),
+ 		parseJson: (raw) => deps.json5.parse(raw)
+ 	});
++}
++function _nemoClawMergeOverrides(cfg) {
++	const _p = (typeof process !== "undefined" && process.env || {}).OPENCLAW_CONFIG_OVERRIDES_FILE;
++	if (!_p) return cfg;
++	try {
++		const _raw = fs.readFileSync(_p, "utf-8");
++		const _ov = JSON5.parse(_raw);
++		if (_ov && typeof _ov === "object") {
++			delete _ov.gateway;
++			const _dm = (t, s) => {
++				if (isPlainObject$2(t) && isPlainObject$2(s)) {
++					const r = { ...t };
++					for (const k of Object.keys(s)) { r[k] = k in r ? _dm(r[k], s[k]) : s[k]; }
++					return r;
++				}
++				return s;
++			};
++			return _dm(cfg, _ov);
++		}
++	} catch (e) { if (e.code !== "ENOENT") console.warn("[nemoclaw] config overrides error:", e.message); }
++	return cfg;
+ }
+ function resolveConfigForRead(resolvedIncludes, env) {
++	resolvedIncludes = _nemoClawMergeOverrides(resolvedIncludes);
+ 	if (resolvedIncludes && typeof resolvedIncludes === "object" && "env" in resolvedIncludes) applyConfigEnvVars(resolvedIncludes, env);
+ 	const envWarnings = [];
+ 	return {
+--- a/dist/gateway-cli-DzTv3_FS.js
++++ b/dist/gateway-cli-DzTv3_FS.js
+@@ -3104,6 +3104,8 @@
+ 		},
+ 		usePolling: Boolean(process.env.VITEST)
+ 	});
++	const _ncOverridesPath = process.env.OPENCLAW_CONFIG_OVERRIDES_FILE;
++	if (_ncOverridesPath) watcher.add(_ncOverridesPath);
+ 	watcher.on("add", schedule);
+ 	watcher.on("change", schedule);
+ 	watcher.on("unlink", schedule);

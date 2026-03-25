@@ -94,6 +94,46 @@ describe("policies", () => {
     });
   });
 
+  describe("base policy", () => {
+    const fs = require("fs");
+    const basePolicyPath = require("path").join(__dirname, "..", "nemoclaw-blueprint", "policies", "openclaw-sandbox.yaml");
+    const basePolicy = fs.readFileSync(basePolicyPath, "utf-8");
+
+    it("does not contain tls: terminate (deprecated in OpenShell >= 0.0.15)", () => {
+      const lines = basePolicy.split("\n").filter(l => !l.trim().startsWith("#"));
+      for (const line of lines) {
+        expect(line.includes("tls: terminate")).toBe(false);
+      }
+    });
+
+    it("has config_overrides section", () => {
+      expect(basePolicy.includes("config_overrides:")).toBeTruthy();
+    });
+
+    it("config_overrides does not contain gateway fields", () => {
+      const match = basePolicy.match(/^config_overrides:\n([\s\S]*?)(?=\n[^\s#]|\n*$)/m);
+      expect(match).toBeTruthy();
+      const block = match[1];
+      expect(block.includes("gateway.")).toBe(false);
+    });
+  });
+
+  describe("no preset contains tls: terminate", () => {
+    it("all presets are free of deprecated tls: terminate", () => {
+      for (const p of policies.listPresets()) {
+        const content = policies.loadPreset(p.name);
+        const lines = content.split("\n").filter(l => !l.trim().startsWith("#"));
+        for (let i = 0; i < lines.length; i++) {
+          if (lines[i].includes("tls: terminate")) {
+            expect.unreachable(
+              `${p.name} line ${i + 1}: contains deprecated tls: terminate`
+            );
+          }
+        }
+      }
+    });
+  });
+
   describe("preset YAML schema", () => {
     it("no preset has rules at NetworkPolicyRuleDef level", () => {
       // rules must be inside endpoints, not as sibling of endpoints/binaries

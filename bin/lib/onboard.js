@@ -354,6 +354,36 @@ async function preflight() {
   }
   console.log(`  ✓ openshell CLI: ${runCapture("openshell --version 2>/dev/null || echo unknown", { ignoreError: true })}`);
 
+  // Enforce min_openshell_version from blueprint.yaml
+  const installedVersion = getInstalledOpenshellVersion();
+  if (installedVersion) {
+    const blueprintPath = path.join(ROOT, "nemoclaw-blueprint", "blueprint.yaml");
+    if (fs.existsSync(blueprintPath)) {
+      const blueprintRaw = fs.readFileSync(blueprintPath, "utf-8");
+      const minMatch = blueprintRaw.match(/min_openshell_version:\s*"([^"]+)"/);
+      if (minMatch) {
+        const minRequired = minMatch[1];
+        const vGte = (a, b) => {
+          const pa = a.split(".").map(Number);
+          const pb = b.split(".").map(Number);
+          for (let i = 0; i < 3; i++) {
+            if ((pa[i] || 0) > (pb[i] || 0)) return true;
+            if ((pa[i] || 0) < (pb[i] || 0)) return false;
+          }
+          return true;
+        };
+        if (!vGte(installedVersion, minRequired)) {
+          console.error("");
+          console.error(`  !! OpenShell ${installedVersion} is below the minimum required version ${minRequired}.`);
+          console.error(`     Please upgrade: https://github.com/NVIDIA/OpenShell/releases`);
+          console.error("");
+          process.exit(1);
+        }
+        console.log(`  ✓ openshell version ${installedVersion} meets minimum ${minRequired}`);
+      }
+    }
+  }
+
   // Clean up stale NemoClaw session before checking ports.
   // A previous onboard run may have left the gateway container and port
   // forward running.  If a NemoClaw-owned gateway is still present, tear
@@ -519,6 +549,7 @@ async function createSandbox(gpu) {
   run(`cp -r "${path.join(ROOT, "nemoclaw")}" "${buildCtx}/nemoclaw"`);
   run(`cp -r "${path.join(ROOT, "nemoclaw-blueprint")}" "${buildCtx}/nemoclaw-blueprint"`);
   run(`cp -r "${path.join(ROOT, "scripts")}" "${buildCtx}/scripts"`);
+  run(`cp -r "${path.join(ROOT, "patches")}" "${buildCtx}/patches"`);
   run(`rm -rf "${buildCtx}/nemoclaw/node_modules"`, { ignoreError: true });
 
   // Create sandbox (use -- echo to avoid dropping into interactive shell)
@@ -613,8 +644,82 @@ async function createSandbox(gpu) {
     gpuEnabled: !!gpu,
   });
 
+  // Write config overrides file from policy defaults into writable partition.
+  // This enables runtime config changes via `nemoclaw config set` — overrides
+  // are deep-merged onto the frozen openclaw.json at load time via our shim patch.
+  writeConfigOverridesFromPolicy(sandboxName);
+
   console.log(`  ✓ Sandbox '${sandboxName}' created`);
   return sandboxName;
+}
+
+/**
+ * Read config_overrides from the policy YAML and write the defaults
+ * as a JSON5 overrides file into the sandbox's writable partition.
+ */
+function writeConfigOverridesFromPolicy(sandboxName) {
+  const policyPath = path.join(ROOT, "nemoclaw-blueprint", "policies", "openclaw-sandbox.yaml");
+  if (!fs.existsSync(policyPath)) return;
+
+  const yaml = fs.readFileSync(policyPath, "utf-8");
+
+  // Simple YAML extraction of config_overrides section.
+  // For a POC we parse the defaults with a lightweight approach rather than
+  // pulling in a full YAML parser at this layer (pyyaml is only in Docker).
+  const startIdx = yaml.indexOf("\nconfig_overrides:\n");
+  if (startIdx === -1) return;
+  const overridesBlock = yaml.slice(startIdx);
+  const overrides = {};
+
+  // Parse dotted-path keys and their default values.
+  // Each entry looks like:
+  //   agents.defaults.model.primary:
+  //     default: "inference/nvidia/nemotron-3-super-120b-a12b"
+  const entryPattern = /^  ([\w.]+):\s*\n\s+default:\s*(.*)/gm;
+  let match;
+  while ((match = entryPattern.exec(overridesBlock)) !== null) {
+    const keyPath = match[1];
+    let value = match[2].trim();
+
+    // If value starts with a quote, it's a string scalar
+    if (value.startsWith('"') || value.startsWith("'")) {
+      value = value.replace(/^["']|["']$/g, "");
+    } else if (value === "false" || value === "true") {
+      value = value === "true";
+    } else if (!isNaN(value) && value !== "") {
+      value = Number(value);
+    }
+    // For array/object defaults (multi-line), skip for now — the Dockerfile
+    // bakes these. Only scalar overrides are written to the overrides file.
+    // Array defaults from the policy are used as documentation, not runtime.
+    if (typeof value === "string" || typeof value === "boolean" || typeof value === "number") {
+      setNestedValue(overrides, keyPath, value);
+    }
+  }
+
+  if (Object.keys(overrides).length === 0) return;
+
+  const json = JSON.stringify(overrides, null, 2);
+  const script = `cat > /sandbox/.openclaw-data/config-overrides.json5 <<'EOF_OVERRIDES'\n${json}\nEOF_OVERRIDES`;
+  run(`openshell exec "${sandboxName}" -- bash -c ${shellQuote(script)}`, { ignoreError: true });
+  console.log("  ✓ Config overrides file written to sandbox");
+}
+
+/**
+ * Set a value at a dotted path in a nested object.
+ * e.g. setNestedValue(obj, "agents.defaults.model.primary", "foo")
+ * creates { agents: { defaults: { model: { primary: "foo" } } } }
+ */
+function setNestedValue(obj, dottedPath, value) {
+  const parts = dottedPath.split(".");
+  let current = obj;
+  for (let i = 0; i < parts.length - 1; i++) {
+    if (!(parts[i] in current) || typeof current[parts[i]] !== "object") {
+      current[parts[i]] = {};
+    }
+    current = current[parts[i]];
+  }
+  current[parts[parts.length - 1]] = value;
 }
 
 // ── Step 4: NIM ──────────────────────────────────────────────────

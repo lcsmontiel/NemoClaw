@@ -51,8 +51,15 @@ RUN mkdir -p /sandbox/.openclaw-data/agents/main/agent \
     && ln -s /sandbox/.openclaw-data/update-check.json /sandbox/.openclaw/update-check.json \
     && chown -R sandbox:sandbox /sandbox/.openclaw /sandbox/.openclaw-data
 
-# Install OpenClaw CLI
-RUN npm install -g openclaw@2026.3.11
+# Install OpenClaw CLI and apply config overrides shim patch.
+# The patch adds OPENCLAW_CONFIG_OVERRIDES_FILE support: a deep-merged overlay
+# file that enables runtime config changes without modifying the frozen
+# openclaw.json.  See patches/openclaw-config-overrides.patch for details.
+COPY patches/openclaw-config-overrides.patch /tmp/openclaw-config-overrides.patch
+RUN npm install -g openclaw@2026.3.11 \
+    && cd /usr/local/lib/node_modules/openclaw \
+    && patch -p1 < /tmp/openclaw-config-overrides.patch \
+    && rm /tmp/openclaw-config-overrides.patch
 
 # Install PyYAML for blueprint runner
 RUN pip3 install --break-system-packages pyyaml
@@ -87,7 +94,8 @@ ARG NEMOCLAW_BUILD_ID=default
 # via os.environ, never via string interpolation into Python source code.
 # Direct ARG interpolation into python3 -c is a code injection vector (C-2).
 ENV NEMOCLAW_MODEL=${NEMOCLAW_MODEL} \
-    CHAT_UI_URL=${CHAT_UI_URL}
+    CHAT_UI_URL=${CHAT_UI_URL} \
+    OPENCLAW_CONFIG_OVERRIDES_FILE=/sandbox/.openclaw-data/config-overrides.json5
 
 WORKDIR /sandbox
 USER sandbox

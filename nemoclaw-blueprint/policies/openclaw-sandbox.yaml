@@ -43,6 +43,11 @@ process:
   run_as_user: sandbox
   run_as_group: sandbox
 
+# Note: tls: terminate annotations removed — OpenShell >= 0.0.15 auto-detects
+# TLS and terminates unconditionally for credential injection (PR #544).
+# Endpoints with permissive wildcard rules (method: "*") simplified to L4-only.
+# Restrictive L7 rules (GET-only, path-scoped) retained for enforcement.
+
 network_policies:
   claude_code:
     name: claude_code
@@ -51,17 +56,10 @@ network_policies:
         port: 443
         protocol: rest
         enforcement: enforce
-        tls: terminate
-        rules:
-          - allow: { method: "*", path: "/**" }
       - host: statsig.anthropic.com
         port: 443
-        rules:
-          - allow: { method: "*", path: "/**" }
       - host: sentry.io
         port: 443
-        rules:
-          - allow: { method: "*", path: "/**" }
     binaries:
       - { path: /usr/local/bin/claude }
 
@@ -72,16 +70,10 @@ network_policies:
         port: 443
         protocol: rest
         enforcement: enforce
-        tls: terminate
-        rules:
-          - allow: { method: "*", path: "/**" }
       - host: inference-api.nvidia.com
         port: 443
         protocol: rest
         enforcement: enforce
-        tls: terminate
-        rules:
-          - allow: { method: "*", path: "/**" }
     binaries:
       - { path: /usr/local/bin/claude }
       - { path: /usr/local/bin/openclaw }
@@ -112,7 +104,6 @@ network_policies:
         port: 443
         protocol: rest
         enforcement: enforce
-        tls: terminate
         rules:
           - allow: { method: GET, path: "/**" }
           - allow: { method: POST, path: "/**" }
@@ -126,7 +117,6 @@ network_policies:
         port: 443
         protocol: rest
         enforcement: enforce
-        tls: terminate
         rules:
           - allow: { method: GET, path: "/**" }
           - allow: { method: POST, path: "/**" }
@@ -140,7 +130,6 @@ network_policies:
         port: 443
         protocol: rest
         enforcement: enforce
-        tls: terminate
         rules:
           - allow: { method: GET, path: "/**" }
     binaries:
@@ -167,7 +156,6 @@ network_policies:
         port: 443
         protocol: rest
         enforcement: enforce
-        tls: terminate
         rules:
           - allow: { method: GET, path: "/bot*/**" }
           - allow: { method: POST, path: "/bot*/**" }
@@ -179,7 +167,6 @@ network_policies:
         port: 443
         protocol: rest
         enforcement: enforce
-        tls: terminate
         rules:
           - allow: { method: GET, path: "/**" }
           - allow: { method: POST, path: "/**" }
@@ -187,7 +174,6 @@ network_policies:
         port: 443
         protocol: rest
         enforcement: enforce
-        tls: terminate
         rules:
           - allow: { method: GET, path: "/**" }
           - allow: { method: POST, path: "/**" }
@@ -195,6 +181,42 @@ network_policies:
         port: 443
         protocol: rest
         enforcement: enforce
-        tls: terminate
         rules:
           - allow: { method: GET, path: "/**" }
+
+# ── Mutable config fields ────────────────────────────────────────────
+# Fields listed here can be overridden at runtime via `nemoclaw config set`
+# or `openshell settings set` without sandbox recreation.
+# OpenClaw hot-reloads when the overrides file changes.
+#
+# Three-tier resolution:
+#   1. Frozen openclaw.json  (gateway.auth.token, CORS — always immutable)
+#   2. Policy defaults below (baseline for mutable fields)
+#   3. User overrides        (runtime changes via nemoclaw config set)
+#
+# gateway.* is always stripped from the overrides file at load time,
+# regardless of whether it appears here.
+
+config_overrides:
+  agents.defaults.model.primary:
+    default: "inference/nvidia/nemotron-3-super-120b-a12b"
+  models.providers.nvidia.models:
+    default:
+      - id: nemotron-3-super-120b-a12b
+        name: nvidia/nemotron-3-super-120b-a12b
+        reasoning: false
+        input: [text]
+        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }
+        contextWindow: 131072
+        maxTokens: 4096
+  models.providers.inference.models:
+    default:
+      - id: nvidia/nemotron-3-super-120b-a12b
+        name: nvidia/nemotron-3-super-120b-a12b
+        reasoning: false
+        input: [text]
+        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }
+        contextWindow: 131072
+        maxTokens: 4096
+  channels.defaults.configWrites:
+    default: false
