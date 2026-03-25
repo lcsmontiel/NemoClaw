@@ -1588,21 +1588,24 @@ function writeConfigOverridesFromPolicy(sandboxName) {
   let match;
   while ((match = entryPattern.exec(overridesBlock)) !== null) {
     const keyPath = match[1];
-    let value = match[2].trim();
+    const rawValue = match[2].trim();
 
-    // If value starts with a quote, it's a string scalar
-    if (value.startsWith('"') || value.startsWith("'")) {
-      value = value.replace(/^["']|["']$/g, "");
-    } else if (value === "false" || value === "true") {
-      value = value === "true";
-    } else if (!isNaN(value) && value !== "") {
-      value = Number(value);
+    // Parse scalar values from YAML.
+    /** @type {string|boolean|number} */
+    let parsed;
+    if (rawValue.startsWith('"') || rawValue.startsWith("'")) {
+      parsed = rawValue.replace(/^["']|["']$/g, "");
+    } else if (rawValue === "false" || rawValue === "true") {
+      parsed = rawValue === "true";
+    } else if (!isNaN(Number(rawValue)) && rawValue !== "") {
+      parsed = Number(rawValue);
+    } else {
+      parsed = rawValue;
     }
     // For array/object defaults (multi-line), skip for now — the Dockerfile
     // bakes these. Only scalar overrides are written to the overrides file.
-    // Array defaults from the policy are used as documentation, not runtime.
-    if (typeof value === "string" || typeof value === "boolean" || typeof value === "number") {
-      setNestedValue(overrides, keyPath, value);
+    if (typeof parsed === "string" || typeof parsed === "boolean" || typeof parsed === "number") {
+      setNestedValue(overrides, keyPath, parsed);
     }
   }
 
