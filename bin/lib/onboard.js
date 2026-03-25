@@ -436,6 +436,7 @@ function getSandboxInferenceConfig(model, provider = null, preferredInferenceApi
   let inferenceBaseUrl = "https://inference.local/v1";
   let inferenceApi = preferredInferenceApi || "openai-completions";
   let inferenceCompat = null;
+  let smallModelMode = false;
 
   switch (provider) {
     case "openai-api":
@@ -463,6 +464,12 @@ function getSandboxInferenceConfig(model, provider = null, preferredInferenceApi
         supportsStore: false,
       };
       break;
+    case "ollama-local":
+    case "vllm-local":
+      providerKey = "inference";
+      primaryModelRef = `inference/${model}`;
+      smallModelMode = true;
+      break;
     case "nvidia-prod":
     case "nvidia-nim":
     default:
@@ -471,7 +478,7 @@ function getSandboxInferenceConfig(model, provider = null, preferredInferenceApi
       break;
   }
 
-  return { providerKey, primaryModelRef, inferenceBaseUrl, inferenceApi, inferenceCompat };
+  return { providerKey, primaryModelRef, inferenceBaseUrl, inferenceApi, inferenceCompat, smallModelMode };
 }
 
 function patchStagedDockerfile(dockerfilePath, model, chatUiUrl, buildId = String(Date.now()), provider = null, preferredInferenceApi = null) {
@@ -481,6 +488,7 @@ function patchStagedDockerfile(dockerfilePath, model, chatUiUrl, buildId = Strin
     inferenceBaseUrl,
     inferenceApi,
     inferenceCompat,
+    smallModelMode,
   } = getSandboxInferenceConfig(model, provider, preferredInferenceApi);
   let dockerfile = fs.readFileSync(dockerfilePath, "utf8");
   dockerfile = dockerfile.replace(
@@ -510,6 +518,10 @@ function patchStagedDockerfile(dockerfilePath, model, chatUiUrl, buildId = Strin
   dockerfile = dockerfile.replace(
     /^ARG NEMOCLAW_INFERENCE_COMPAT_B64=.*$/m,
     `ARG NEMOCLAW_INFERENCE_COMPAT_B64=${encodeDockerJsonArg(inferenceCompat)}`
+  );
+  dockerfile = dockerfile.replace(
+    /^ARG NEMOCLAW_SMALL_MODEL_MODE=.*$/m,
+    `ARG NEMOCLAW_SMALL_MODEL_MODE=${smallModelMode ? "1" : "0"}`
   );
   dockerfile = dockerfile.replace(
     /^ARG NEMOCLAW_BUILD_ID=.*$/m,
@@ -1412,6 +1424,10 @@ async function createSandbox(gpu, model, provider, preferredInferenceApi = null)
   console.log(`  Creating sandbox '${sandboxName}' (this takes a few minutes on first run)...`);
   const chatUiUrl = process.env.CHAT_UI_URL || "http://127.0.0.1:18789";
   patchStagedDockerfile(stagedDockerfile, model, chatUiUrl, String(Date.now()), provider, preferredInferenceApi);
+  const { smallModelMode } = getSandboxInferenceConfig(model, provider, preferredInferenceApi);
+  if (smallModelMode) {
+    console.log("  [experimental] Small model mode: reduced system prompt for local inference");
+  }
   // Only pass non-sensitive env vars to the sandbox. NVIDIA_API_KEY is NOT
   // needed inside the sandbox — inference is proxied through the OpenShell
   // gateway which injects the stored credential server-side. The gateway
