@@ -153,6 +153,12 @@ function getSandboxGatewayState(sandboxName) {
 
 function printGatewayLifecycleHint(output = "", sandboxName = "", writer = console.error) {
   const cleanOutput = stripAnsi(output);
+  if (/No gateway configured/i.test(cleanOutput)) {
+    writer("  The selected NemoClaw gateway is no longer configured or its metadata/runtime has been lost.");
+    writer("  Start the gateway again with `openshell gateway start --name nemoclaw` before expecting existing sandboxes to reconnect.");
+    writer("  If the gateway has to be rebuilt from scratch, recreate the affected sandbox afterward.");
+    return;
+  }
   if (/Connection refused|client error \(Connect\)|tcp connect error/i.test(cleanOutput) && /Gateway:\s+nemoclaw/i.test(cleanOutput)) {
     writer("  The selected NemoClaw gateway exists in metadata, but its API is refusing connections after restart.");
     writer("  This usually means the gateway runtime did not come back cleanly after the restart.");
@@ -204,6 +210,12 @@ function getReconciledSandboxGatewayState(sandboxName) {
     }
     const latestLifecycle = getNamedGatewayLifecycleState();
     const latestStatus = stripAnsi(latestLifecycle.status || "");
+    if (/No gateway configured/i.test(latestStatus)) {
+      return {
+        state: "gateway_missing_after_restart",
+        output: latestLifecycle.status || lookup.output,
+      };
+    }
     if (/Connection refused|client error \(Connect\)|tcp connect error/i.test(latestStatus) && /Gateway:\s+nemoclaw/i.test(latestStatus)) {
       return {
         state: "gateway_unreachable_after_restart",
@@ -250,6 +262,15 @@ function ensureLiveSandboxOrExit(sandboxName) {
     }
     console.error("  Retry `openshell gateway start --name nemoclaw` and verify `openshell status` is healthy before reconnecting.");
     console.error("  If the gateway never becomes healthy, rebuild the gateway and then recreate the affected sandbox.");
+    process.exit(1);
+  }
+  if (lookup.state === "gateway_missing_after_restart") {
+    console.error(`  Sandbox '${sandboxName}' may still exist locally, but the NemoClaw gateway is no longer configured after restart/rebuild.`);
+    if (lookup.output) {
+      console.error(lookup.output);
+    }
+    console.error("  Start the gateway again with `openshell gateway start --name nemoclaw` before retrying.");
+    console.error("  If the gateway had to be rebuilt from scratch, recreate the affected sandbox afterward.");
     process.exit(1);
   }
   console.error(`  Unable to verify sandbox '${sandboxName}' against the live OpenShell gateway.`);
@@ -569,6 +590,14 @@ function sandboxStatus(sandboxName) {
     }
     console.log("  Retry `openshell gateway start --name nemoclaw` and verify `openshell status` is healthy before reconnecting.");
     console.log("  If the gateway never becomes healthy, rebuild the gateway and then recreate the affected sandbox.");
+  } else if (lookup.state === "gateway_missing_after_restart") {
+    console.log("");
+    console.log(`  Sandbox '${sandboxName}' may still exist locally, but the NemoClaw gateway is no longer configured after restart/rebuild.`);
+    if (lookup.output) {
+      console.log(lookup.output);
+    }
+    console.log("  Start the gateway again with `openshell gateway start --name nemoclaw` before retrying.");
+    console.log("  If the gateway had to be rebuilt from scratch, recreate the affected sandbox afterward.");
   } else {
     console.log("");
     console.log(`  Could not verify sandbox '${sandboxName}' against the live OpenShell gateway.`);
