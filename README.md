@@ -40,6 +40,8 @@ Before getting started, check the prerequisites to ensure you have the necessary
 | RAM      | 8 GB           | 16 GB            |
 | Disk     | 20 GB free     | 40 GB free       |
 
+The sandbox image is approximately 2.4 GB compressed. During image push, the Docker daemon, k3s, and the OpenShell gateway run alongside the export pipeline, which buffers decompressed layers in memory. On machines with less than 8 GB of RAM, this combined usage can trigger the OOM killer. If you cannot add memory, configuring at least 8 GB of swap can work around the issue at the cost of slower performance.
+
 #### Software
 
 | Dependency | Version                          |
