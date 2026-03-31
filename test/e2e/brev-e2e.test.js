@@ -147,9 +147,8 @@ describe.runIf(hasRequiredVars)("Brev E2E", () => {
     // Wait for instance to be reachable via brev exec
     waitForInstance();
 
-    // Sync code via brev exec + tar (rsync needs SSH config, brev exec does not)
-    const remoteHome = remoteExec("echo $HOME");
-    remoteDir = `${remoteHome}/nemoclaw`;
+    // Sync code to remote instance
+    remoteDir = "/home/ubuntu/nemoclaw";
     remoteExec(`mkdir -p ${remoteDir}`);
 
     // Create tarball locally, pipe to remote via brev exec
