@@ -9,8 +9,12 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 
 import {
+  buildProviderArgs,
   buildSandboxConfigSyncScript,
   classifySandboxCreateFailure,
+  compactText,
+  formatEnvAssignment,
+  getNavigationChoice,
   getGatewayReuseState,
   getFutureShellPathHint,
   getSandboxInferenceConfig,
@@ -25,8 +29,11 @@ import {
   isGatewayHealthy,
   classifyValidationFailure,
   normalizeProviderBaseUrl,
+  parsePolicyPresetEnv,
   patchStagedDockerfile,
   printSandboxCreateRecoveryHints,
+  summarizeCurlFailure,
+  summarizeProbeFailure,
   shouldIncludeBuildContextPath,
   writeSandboxConfigSyncFile,
 } from "../bin/lib/onboard";
@@ -464,6 +471,101 @@ describe("onboard helpers", () => {
     } finally {
       fs.rmSync(tmpDir, { recursive: true, force: true });
     }
+  });
+
+  it("formatEnvAssignment produces NAME=VALUE pairs for sandbox env", () => {
+    expect(formatEnvAssignment("CHAT_UI_URL", "http://127.0.0.1:18789"))
+      .toBe("CHAT_UI_URL=http://127.0.0.1:18789");
+    expect(formatEnvAssignment("EMPTY", "")).toBe("EMPTY=");
+  });
+
+  it("compactText collapses whitespace and trims leading/trailing space", () => {
+    expect(compactText("  gateway   unreachable  ")).toBe("gateway unreachable");
+    expect(compactText("")).toBe("");
+    expect(compactText()).toBe("");
+    expect(compactText("single")).toBe("single");
+    expect(compactText("line1\n  line2\t\tline3")).toBe("line1 line2 line3");
+  });
+
+  it("getNavigationChoice recognizes back and exit commands case-insensitively", () => {
+    expect(getNavigationChoice("back")).toBe("back");
+    expect(getNavigationChoice("BACK")).toBe("back");
+    expect(getNavigationChoice("  Back  ")).toBe("back");
+    expect(getNavigationChoice("exit")).toBe("exit");
+    expect(getNavigationChoice("quit")).toBe("exit");
+    expect(getNavigationChoice("QUIT")).toBe("exit");
+    expect(getNavigationChoice("")).toBeNull();
+    expect(getNavigationChoice("something")).toBeNull();
+    expect(getNavigationChoice(null)).toBeNull();
+  });
+
+  it("parsePolicyPresetEnv splits comma-separated preset names and trims whitespace", () => {
+    expect(parsePolicyPresetEnv("strict,standard")).toEqual(["strict", "standard"]);
+    expect(parsePolicyPresetEnv("  strict , standard , ")).toEqual(["strict", "standard"]);
+    expect(parsePolicyPresetEnv("")).toEqual([]);
+    expect(parsePolicyPresetEnv(null)).toEqual([]);
+    expect(parsePolicyPresetEnv("single")).toEqual(["single"]);
+  });
+
+  it("summarizeCurlFailure formats curl errors with exit code and truncated detail", () => {
+    expect(summarizeCurlFailure(7, "Connection refused", "")).toBe(
+      "curl failed (exit 7): Connection refused"
+    );
+    expect(summarizeCurlFailure(28, "", "")).toBe("curl failed (exit 28)");
+    expect(summarizeCurlFailure(0, "", "")).toBe("curl failed (exit 0)");
+  });
+
+  it("summarizeProbeFailure prioritizes curl failures then HTTP status then generic message", () => {
+    // curl failure takes precedence
+    expect(summarizeProbeFailure("body", 500, 7, "Connection refused")).toBe(
+      "curl failed (exit 7): Connection refused"
+    );
+    // HTTP error when no curl failure
+    expect(summarizeProbeFailure("Not Found", 404, 0, "")).toBe(
+      "HTTP 404: Not Found"
+    );
+    // Fallback: no curl failure and no body → HTTP status with no body message
+    expect(summarizeProbeFailure("", 0, 0, "")).toBe("HTTP 0 with no response body");
+    // Non-JSON body gets compacted and returned
+    expect(summarizeProbeFailure("  Service  Unavailable  ", 503, 0, "")).toBe(
+      "HTTP 503: Service Unavailable"
+    );
+  });
+
+  it("buildProviderArgs produces correct create arguments for generic providers", () => {
+    const args = buildProviderArgs("create", "discord-bridge", "generic", "DISCORD_BOT_TOKEN", null);
+    expect(args).toEqual([
+      "provider", "create",
+      "--name", "discord-bridge",
+      "--type", "generic",
+      "--credential", "DISCORD_BOT_TOKEN",
+    ]);
+  });
+
+  it("buildProviderArgs produces correct update arguments", () => {
+    const args = buildProviderArgs("update", "inference", "openai", "NVIDIA_API_KEY", null);
+    expect(args).toEqual([
+      "provider", "update",
+      "inference",
+      "--credential", "NVIDIA_API_KEY",
+    ]);
+  });
+
+  it("buildProviderArgs appends OPENAI_BASE_URL config for openai providers with a base URL", () => {
+    const args = buildProviderArgs("create", "inference", "openai", "NVIDIA_API_KEY", "https://api.example.com/v1");
+    expect(args).toContain("--config");
+    expect(args).toContain("OPENAI_BASE_URL=https://api.example.com/v1");
+  });
+
+  it("buildProviderArgs appends ANTHROPIC_BASE_URL config for anthropic providers with a base URL", () => {
+    const args = buildProviderArgs("create", "inference", "anthropic", "ANTHROPIC_API_KEY", "https://api.anthropic.example.com");
+    expect(args).toContain("--config");
+    expect(args).toContain("ANTHROPIC_BASE_URL=https://api.anthropic.example.com");
+  });
+
+  it("buildProviderArgs ignores base URL for generic providers", () => {
+    const args = buildProviderArgs("create", "slack-bridge", "generic", "SLACK_BOT_TOKEN", "https://ignored.example.com");
+    expect(args).not.toContain("--config");
   });
 
   it("passes credential names to openshell without embedding secret values in argv", () => {
@@ -1399,6 +1501,237 @@ const { createSandbox } = require(${onboardPath});
       "Slack token value must not leak into sandbox env");
     assert.ok(!envString.includes("123456:ABC-test-telegram-token"),
       "Telegram token value must not leak into sandbox env");
+  });
+
+  it("upsertProvider creates a new provider and returns ok on success", () => {
+    const repoRoot = path.join(import.meta.dirname, "..");
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-upsert-provider-create-"));
+    const fakeBin = path.join(tmpDir, "bin");
+    const scriptPath = path.join(tmpDir, "upsert-provider-create.js");
+    const onboardPath = JSON.stringify(path.join(repoRoot, "bin", "lib", "onboard.js"));
+    const runnerPath = JSON.stringify(path.join(repoRoot, "bin", "lib", "runner.js"));
+
+    fs.mkdirSync(fakeBin, { recursive: true });
+    fs.writeFileSync(path.join(fakeBin, "openshell"), "#!/usr/bin/env bash\nexit 0\n", { mode: 0o755 });
+
+    const script = `
+const runner = require(${runnerPath});
+const commands = [];
+runner.run = (command, opts = {}) => {
+  commands.push(command);
+  return { status: 0, stdout: "", stderr: "" };
+};
+const { upsertProvider } = require(${onboardPath});
+const result = upsertProvider("discord-bridge", "generic", "DISCORD_BOT_TOKEN", null, { DISCORD_BOT_TOKEN: "fake" });
+console.log(JSON.stringify({ result, commands }));
+`;
+    fs.writeFileSync(scriptPath, script);
+
+    const result = spawnSync(process.execPath, [scriptPath], {
+      cwd: repoRoot,
+      encoding: "utf-8",
+      env: { ...process.env, HOME: tmpDir, PATH: `${fakeBin}:${process.env.PATH || ""}` },
+    });
+
+    assert.equal(result.status, 0, result.stderr);
+    const payload = JSON.parse(result.stdout.trim().split("\n").pop());
+    assert.deepEqual(payload.result, { ok: true });
+    assert.equal(payload.commands.length, 1);
+    assert.match(payload.commands[0], /'provider' 'create' '--name' 'discord-bridge'/);
+    assert.match(payload.commands[0], /'--credential' 'DISCORD_BOT_TOKEN'/);
+  });
+
+  it("upsertProvider falls back to update when create fails", () => {
+    const repoRoot = path.join(import.meta.dirname, "..");
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-upsert-provider-update-"));
+    const fakeBin = path.join(tmpDir, "bin");
+    const scriptPath = path.join(tmpDir, "upsert-provider-update.js");
+    const onboardPath = JSON.stringify(path.join(repoRoot, "bin", "lib", "onboard.js"));
+    const runnerPath = JSON.stringify(path.join(repoRoot, "bin", "lib", "runner.js"));
+
+    fs.mkdirSync(fakeBin, { recursive: true });
+    fs.writeFileSync(path.join(fakeBin, "openshell"), "#!/usr/bin/env bash\nexit 0\n", { mode: 0o755 });
+
+    const script = `
+const runner = require(${runnerPath});
+const commands = [];
+let callCount = 0;
+runner.run = (command, opts = {}) => {
+  commands.push(command);
+  callCount++;
+  // First call (create) fails, second call (update) succeeds
+  return callCount === 1
+    ? { status: 1, stdout: "", stderr: "already exists" }
+    : { status: 0, stdout: "", stderr: "" };
+};
+const { upsertProvider } = require(${onboardPath});
+const result = upsertProvider("inference", "openai", "NVIDIA_API_KEY", "https://integrate.api.nvidia.com/v1");
+console.log(JSON.stringify({ result, commands }));
+`;
+    fs.writeFileSync(scriptPath, script);
+
+    const result = spawnSync(process.execPath, [scriptPath], {
+      cwd: repoRoot,
+      encoding: "utf-8",
+      env: { ...process.env, HOME: tmpDir, PATH: `${fakeBin}:${process.env.PATH || ""}` },
+    });
+
+    assert.equal(result.status, 0, result.stderr);
+    const payload = JSON.parse(result.stdout.trim().split("\n").pop());
+    assert.deepEqual(payload.result, { ok: true });
+    assert.equal(payload.commands.length, 2);
+    assert.match(payload.commands[0], /'provider' 'create'/);
+    assert.match(payload.commands[1], /'provider' 'update'/);
+    assert.match(payload.commands[1], /'--config' 'OPENAI_BASE_URL=https:\/\/integrate.api.nvidia.com\/v1'/);
+  });
+
+  it("upsertProvider returns error details when both create and update fail", () => {
+    const repoRoot = path.join(import.meta.dirname, "..");
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-upsert-provider-fail-"));
+    const fakeBin = path.join(tmpDir, "bin");
+    const scriptPath = path.join(tmpDir, "upsert-provider-fail.js");
+    const onboardPath = JSON.stringify(path.join(repoRoot, "bin", "lib", "onboard.js"));
+    const runnerPath = JSON.stringify(path.join(repoRoot, "bin", "lib", "runner.js"));
+
+    fs.mkdirSync(fakeBin, { recursive: true });
+    fs.writeFileSync(path.join(fakeBin, "openshell"), "#!/usr/bin/env bash\nexit 0\n", { mode: 0o755 });
+
+    const script = `
+const runner = require(${runnerPath});
+runner.run = (command, opts = {}) => {
+  return { status: 1, stdout: "", stderr: "gateway unreachable" };
+};
+const { upsertProvider } = require(${onboardPath});
+const result = upsertProvider("bad-provider", "generic", "SOME_KEY", null);
+console.log(JSON.stringify(result));
+`;
+    fs.writeFileSync(scriptPath, script);
+
+    const result = spawnSync(process.execPath, [scriptPath], {
+      cwd: repoRoot,
+      encoding: "utf-8",
+      env: { ...process.env, HOME: tmpDir, PATH: `${fakeBin}:${process.env.PATH || ""}` },
+    });
+
+    assert.equal(result.status, 0, result.stderr);
+    const payload = JSON.parse(result.stdout.trim().split("\n").pop());
+    assert.equal(payload.ok, false);
+    assert.equal(payload.status, 1);
+    assert.match(payload.message, /gateway unreachable/);
+  });
+
+  it("providerExistsInGateway returns true when provider exists", () => {
+    const repoRoot = path.join(import.meta.dirname, "..");
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-provider-exists-true-"));
+    const fakeBin = path.join(tmpDir, "bin");
+    const scriptPath = path.join(tmpDir, "provider-exists-true.js");
+    const onboardPath = JSON.stringify(path.join(repoRoot, "bin", "lib", "onboard.js"));
+    const runnerPath = JSON.stringify(path.join(repoRoot, "bin", "lib", "runner.js"));
+
+    fs.mkdirSync(fakeBin, { recursive: true });
+    fs.writeFileSync(path.join(fakeBin, "openshell"), "#!/usr/bin/env bash\nexit 0\n", { mode: 0o755 });
+
+    const script = `
+const runner = require(${runnerPath});
+runner.run = (command) => {
+  return { status: 0, stdout: "Provider: discord-bridge", stderr: "" };
+};
+const { providerExistsInGateway } = require(${onboardPath});
+console.log(JSON.stringify({ exists: providerExistsInGateway("discord-bridge") }));
+`;
+    fs.writeFileSync(scriptPath, script);
+
+    const result = spawnSync(process.execPath, [scriptPath], {
+      cwd: repoRoot,
+      encoding: "utf-8",
+      env: { ...process.env, HOME: tmpDir, PATH: `${fakeBin}:${process.env.PATH || ""}` },
+    });
+
+    assert.equal(result.status, 0, result.stderr);
+    const payload = JSON.parse(result.stdout.trim().split("\n").pop());
+    assert.equal(payload.exists, true);
+  });
+
+  it("hydrateCredentialEnv writes stored credentials into process.env for host-side bridges", () => {
+    const repoRoot = path.join(import.meta.dirname, "..");
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hydrate-cred-"));
+    const fakeBin = path.join(tmpDir, "bin");
+    const scriptPath = path.join(tmpDir, "hydrate-cred.js");
+    const onboardPath = JSON.stringify(path.join(repoRoot, "bin", "lib", "onboard.js"));
+    const credentialsPath = JSON.stringify(path.join(repoRoot, "bin", "lib", "credentials.js"));
+
+    fs.mkdirSync(fakeBin, { recursive: true });
+    fs.writeFileSync(path.join(fakeBin, "openshell"), "#!/usr/bin/env bash\nexit 0\n", { mode: 0o755 });
+
+    const script = `
+const credentials = require(${credentialsPath});
+// Mock getCredential to return a stored value
+credentials.getCredential = (name) => name === "TELEGRAM_BOT_TOKEN" ? "stored-telegram-token" : null;
+const { hydrateCredentialEnv } = require(${onboardPath});
+
+// Should return null for falsy input
+const nullResult = hydrateCredentialEnv(null);
+
+// Should hydrate from stored credential and set process.env
+delete process.env.TELEGRAM_BOT_TOKEN;
+const hydrated = hydrateCredentialEnv("TELEGRAM_BOT_TOKEN");
+
+// Should return null when credential is not stored
+const missing = hydrateCredentialEnv("NONEXISTENT_KEY");
+
+console.log(JSON.stringify({
+  nullResult,
+  hydrated,
+  envSet: process.env.TELEGRAM_BOT_TOKEN,
+  missing,
+}));
+`;
+    fs.writeFileSync(scriptPath, script);
+
+    const result = spawnSync(process.execPath, [scriptPath], {
+      cwd: repoRoot,
+      encoding: "utf-8",
+      env: { ...process.env, HOME: tmpDir, PATH: `${fakeBin}:${process.env.PATH || ""}` },
+    });
+
+    assert.equal(result.status, 0, result.stderr);
+    const payload = JSON.parse(result.stdout.trim().split("\n").pop());
+    assert.equal(payload.nullResult, null, "should return null for null input");
+    assert.equal(payload.hydrated, "stored-telegram-token", "should return stored credential value");
+    assert.equal(payload.envSet, "stored-telegram-token", "should set process.env with stored value");
+    assert.equal(payload.missing, null, "should return null when credential is not stored");
+  });
+
+  it("providerExistsInGateway returns false when provider is missing", () => {
+    const repoRoot = path.join(import.meta.dirname, "..");
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-provider-exists-false-"));
+    const fakeBin = path.join(tmpDir, "bin");
+    const scriptPath = path.join(tmpDir, "provider-exists-false.js");
+    const onboardPath = JSON.stringify(path.join(repoRoot, "bin", "lib", "onboard.js"));
+    const runnerPath = JSON.stringify(path.join(repoRoot, "bin", "lib", "runner.js"));
+
+    fs.mkdirSync(fakeBin, { recursive: true });
+    fs.writeFileSync(path.join(fakeBin, "openshell"), "#!/usr/bin/env bash\nexit 0\n", { mode: 0o755 });
+
+    const script = `
+const runner = require(${runnerPath});
+runner.run = (command) => {
+  return { status: 1, stdout: "", stderr: "provider not found" };
+};
+const { providerExistsInGateway } = require(${onboardPath});
+console.log(JSON.stringify({ exists: providerExistsInGateway("nonexistent") }));
+`;
+    fs.writeFileSync(scriptPath, script);
+
+    const result = spawnSync(process.execPath, [scriptPath], {
+      cwd: repoRoot,
+      encoding: "utf-8",
+      env: { ...process.env, HOME: tmpDir, PATH: `${fakeBin}:${process.env.PATH || ""}` },
+    });
+
+    assert.equal(result.status, 0, result.stderr);
+    const payload = JSON.parse(result.stdout.trim().split("\n").pop());
+    assert.equal(payload.exists, false);
   });
 
   it("continues once the sandbox is Ready even if the create stream never closes", async () => {
