@@ -70,9 +70,17 @@ describe("inference selection config", () => {
   });
 
   it("maps the remaining hosted providers to the sandbox inference route", () => {
-    expect(getProviderSelectionConfig("openai-api", "gpt-5.4-mini")).toEqual(
-      expect.objectContaining({ model: "gpt-5.4-mini", providerLabel: "OpenAI" }),
-    );
+    // Full-object assertion for one hosted provider to catch structural regressions
+    expect(getProviderSelectionConfig("openai-api", "gpt-5.4-mini")).toEqual({
+      endpointType: "custom",
+      endpointUrl: INFERENCE_ROUTE_URL,
+      ncpPartner: null,
+      model: "gpt-5.4-mini",
+      profile: DEFAULT_ROUTE_PROFILE,
+      credentialEnv: "OPENAI_API_KEY",
+      provider: "openai-api",
+      providerLabel: "OpenAI",
+    });
     expect(getProviderSelectionConfig("anthropic-prod", "claude-sonnet-4-6")).toEqual(
       expect.objectContaining({ model: "claude-sonnet-4-6", providerLabel: "Anthropic" }),
     );
@@ -85,9 +93,17 @@ describe("inference selection config", () => {
         providerLabel: "Other OpenAI-compatible endpoint",
       }),
     );
-    expect(getProviderSelectionConfig("vllm-local", "meta-llama")).toEqual(
-      expect.objectContaining({ model: "meta-llama", providerLabel: "Local vLLM" }),
-    );
+    // Full-object assertion for one local provider
+    expect(getProviderSelectionConfig("vllm-local", "meta-llama")).toEqual({
+      endpointType: "custom",
+      endpointUrl: INFERENCE_ROUTE_URL,
+      ncpPartner: null,
+      model: "meta-llama",
+      profile: DEFAULT_ROUTE_PROFILE,
+      credentialEnv: DEFAULT_ROUTE_CREDENTIAL_ENV,
+      provider: "vllm-local",
+      providerLabel: "Local vLLM",
+    });
   });
 
   it("returns null for unknown providers", () => {
