@@ -33,8 +33,8 @@ esac
 
 info "Detected $OS_LABEL ($ARCH_LABEL)"
 
-# Minimum version required for cgroup v2 fix (NVIDIA/OpenShell#329)
-MIN_VERSION="0.0.7"
+# Minimum version required for L7 URL-path credential injection (NVIDIA/OpenShell#708)
+MIN_VERSION="0.0.20"
 
 version_gte() {
   # Returns 0 (true) if $1 >= $2 — portable, no sort -V (BSD compat)

@@ -2134,7 +2134,7 @@ async function createSandbox(
   const hasMessagingTokens =
     !!(getCredential("DISCORD_BOT_TOKEN") || process.env.DISCORD_BOT_TOKEN) ||
     !!(getCredential("SLACK_BOT_TOKEN") || process.env.SLACK_BOT_TOKEN) ||
-    !!(hydrateCredentialEnv("TELEGRAM_BOT_TOKEN") || process.env.TELEGRAM_BOT_TOKEN);
+    !!(getCredential("TELEGRAM_BOT_TOKEN") || process.env.TELEGRAM_BOT_TOKEN);
 
   // Reconcile local registry state with the live OpenShell gateway state.
   const liveExists = pruneStaleSandboxEntry(sandboxName);
@@ -2211,10 +2211,8 @@ async function createSandbox(
 
   // Create OpenShell providers for messaging credentials so they flow through
   // the provider/placeholder system instead of raw env vars. The L7 proxy
-  // rewrites Authorization headers (Bearer/Bot) with real secrets at egress.
-  // Telegram provider is created for credential storage but the host-side bridge
-  // still reads from host env — Telegram uses URL-path auth (/bot{TOKEN}/) which
-  // the proxy can't rewrite yet.
+  // rewrites Authorization headers (Bearer/Bot) and URL-path segments
+  // (/bot{TOKEN}/) with real secrets at egress (OpenShell ≥ 0.0.20).
   const messagingProviders = [];
   const messagingTokenDefs = [
     {
@@ -2230,7 +2228,7 @@ async function createSandbox(
     {
       name: "telegram-bridge",
       envKey: "TELEGRAM_BOT_TOKEN",
-      token: hydrateCredentialEnv("TELEGRAM_BOT_TOKEN") || process.env.TELEGRAM_BOT_TOKEN,
+      token: getCredential("TELEGRAM_BOT_TOKEN") || process.env.TELEGRAM_BOT_TOKEN,
     },
   ];
   for (const { name, envKey, token } of messagingTokenDefs) {
