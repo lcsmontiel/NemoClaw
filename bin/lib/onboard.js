@@ -2149,7 +2149,7 @@ async function createSandbox(
   preferredInferenceApi = null,
   sandboxNameOverride = null,
 ) {
-  step(5, 8, "Creating sandbox");
+  step(6, 8, "Creating sandbox");
 
   const sandboxName = sandboxNameOverride || (await promptValidatedSandboxName());
   const chatUiUrl = process.env.CHAT_UI_URL || `http://127.0.0.1:${CONTROL_UI_PORT}`;
@@ -3141,7 +3141,7 @@ const MESSAGING_CHANNELS = [
 ];
 
 async function setupMessagingChannels() {
-  step(6, 8, "Messaging channels");
+  step(5, 8, "Messaging channels");
 
   const getMessagingToken = (envKey) =>
     getCredential(envKey) || normalizeCredentialValue(process.env[envKey]) || null;
@@ -3661,8 +3661,8 @@ const ONBOARD_STEP_INDEX = {
   gateway: { number: 2, title: "Starting OpenShell gateway" },
   provider_selection: { number: 3, title: "Configuring inference (NIM)" },
   inference: { number: 4, title: "Setting up inference provider" },
-  sandbox: { number: 5, title: "Creating sandbox" },
-  messaging: { number: 6, title: "Messaging channels" },
+  messaging: { number: 5, title: "Messaging channels" },
+  sandbox: { number: 6, title: "Creating sandbox" },
   openclaw: { number: 7, title: "Setting up OpenClaw inside sandbox" },
   policies: { number: 8, title: "Policy presets" },
 };
@@ -3916,12 +3916,12 @@ async function onboard(opts = {}) {
           }
         }
       }
+      await setupMessagingChannels();
+
       startRecordedStep("sandbox", { sandboxName, provider, model });
       sandboxName = await createSandbox(gpu, model, provider, preferredInferenceApi, sandboxName);
       onboardSession.markStepComplete("sandbox", { sandboxName, provider, model, nimContainer });
     }
-
-    await setupMessagingChannels();
 
     const resumeOpenclaw = resume && sandboxName && isOpenclawReady(sandboxName);
     if (resumeOpenclaw) {
