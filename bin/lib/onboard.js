@@ -3158,25 +3158,63 @@ async function setupMessagingChannels() {
   }
 
   // Show available channels with ●/○ markers (same UX as policy presets)
+  const configured = MESSAGING_CHANNELS.filter((c) => getMessagingToken(c.envKey));
+  const suggestions = configured.map((c) => c.name);
+
   console.log("");
   console.log("  Available messaging channels:");
   for (const ch of MESSAGING_CHANNELS) {
     const hasToken = !!getMessagingToken(ch.envKey);
     const marker = hasToken ? "●" : "○";
-    const status = hasToken ? " (token configured)" : "";
+    const status = hasToken ? " (configured)" : "";
     console.log(`    ${marker} ${ch.name} — ${ch.description}${status}`);
   }
   console.log("");
 
-  const answer = await prompt("  Enable channels (comma-separated, or Enter to skip): ");
-  const selected = answer
-    .split(",")
-    .map((s) => s.trim().toLowerCase())
-    .filter(Boolean);
+  let selected;
 
-  if (selected.length === 0) {
-    console.log("  Skipping messaging channels.");
-    return;
+  if (suggestions.length > 0) {
+    const answer = (
+      await prompt(`  Keep configured channels (${suggestions.join(", ")})? [Y/n/list]: `)
+    )
+      .trim()
+      .toLowerCase();
+
+    if (answer === "n") {
+      console.log("  Skipping messaging channels.");
+      return;
+    }
+    if (answer === "list") {
+      const picks = await prompt("  Enter channel names (comma-separated): ");
+      selected = picks
+        .split(",")
+        .map((s) => s.trim().toLowerCase())
+        .filter(Boolean);
+    } else {
+      // Y or Enter — keep what's configured, nothing more to do
+      console.log(`  ✓ Keeping: ${suggestions.join(", ")}`);
+      return;
+    }
+  } else {
+    const answer = (
+      await prompt("  Enable messaging channels? [y/N/list]: ")
+    )
+      .trim()
+      .toLowerCase();
+
+    if (answer === "list") {
+      const picks = await prompt("  Enter channel names (comma-separated): ");
+      selected = picks
+        .split(",")
+        .map((s) => s.trim().toLowerCase())
+        .filter(Boolean);
+    } else if (answer === "y" || answer === "yes") {
+      // Enable all
+      selected = MESSAGING_CHANNELS.map((c) => c.name);
+    } else {
+      console.log("  Skipping messaging channels.");
+      return;
+    }
   }
 
   // For each selected channel, prompt for token if not already set
@@ -3187,7 +3225,7 @@ async function setupMessagingChannels() {
       continue;
     }
     if (getMessagingToken(ch.envKey)) {
-      console.log(`  ✓ ${ch.name} — token already configured`);
+      console.log(`  ✓ ${ch.name} — already configured`);
       continue;
     }
     console.log("");
