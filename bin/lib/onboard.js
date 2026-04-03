@@ -2159,6 +2159,81 @@ async function createSandbox(
   // without provider attachments (security: prevents legacy raw-env-var leaks).
   const getMessagingToken = (envKey) =>
     getCredential(envKey) || normalizeCredentialValue(process.env[envKey]) || null;
+
+  // Offer to configure messaging channels if none are set and we're interactive.
+  // Check the env var directly as well — NON_INTERACTIVE is only set inside
+  // onboard(), but createSandbox() can be called directly by tests or scripts.
+  if (
+    !isNonInteractive() &&
+    process.env.NEMOCLAW_NON_INTERACTIVE !== "1" &&
+    !getMessagingToken("TELEGRAM_BOT_TOKEN") &&
+    !getMessagingToken("DISCORD_BOT_TOKEN") &&
+    !getMessagingToken("SLACK_BOT_TOKEN")
+  ) {
+    console.log("");
+    console.log("  ┌──────────────────────────────────────────────────────────────┐");
+    console.log("  │  Messaging channels (optional)                               │");
+    console.log("  │                                                              │");
+    console.log("  │  Connect Telegram, Discord, or Slack so your assistant       │");
+    console.log("  │  can send and receive messages. Tokens are stored securely   │");
+    console.log("  │  and never exposed inside the sandbox.                       │");
+    console.log("  │                                                              │");
+    console.log("  │  Press Enter to skip, or type a channel name to configure.   │");
+    console.log("  └──────────────────────────────────────────────────────────────┘");
+    console.log("");
+
+    const MESSAGING_CHANNELS = [
+      {
+        name: "telegram",
+        envKey: "TELEGRAM_BOT_TOKEN",
+        label: "Telegram Bot Token",
+        help: "Create a bot via @BotFather on Telegram → copy the token",
+      },
+      {
+        name: "discord",
+        envKey: "DISCORD_BOT_TOKEN",
+        label: "Discord Bot Token",
+        help: "Discord Developer Portal → Applications → Bot → Copy token",
+      },
+      {
+        name: "slack",
+        envKey: "SLACK_BOT_TOKEN",
+        label: "Slack Bot Token",
+        help: "Slack API → Your Apps → OAuth & Permissions → Bot User OAuth Token (xoxb-...)",
+      },
+    ];
+
+    const channelAnswer = (
+      await prompt("  Connect a channel? (telegram / discord / slack / skip) [skip]: ")
+    )
+      .trim()
+      .toLowerCase();
+
+    if (channelAnswer && channelAnswer !== "skip") {
+      const channels = channelAnswer.split(/[,\s]+/).filter(Boolean);
+      for (const ch of channels) {
+        const def = MESSAGING_CHANNELS.find((c) => c.name === ch);
+        if (!def) {
+          console.log(`  Unknown channel: ${ch} (available: telegram, discord, slack)`);
+          continue;
+        }
+        console.log("");
+        console.log(`  ${def.help}`);
+        const token = normalizeCredentialValue(
+          await prompt(`  ${def.label}: `, { secret: true }),
+        );
+        if (token) {
+          saveCredential(def.envKey, token);
+          process.env[def.envKey] = token;
+          console.log(`  ✓ ${def.name} token saved`);
+        } else {
+          console.log(`  Skipped ${def.name}`);
+        }
+      }
+      console.log("");
+    }
+  }
+
   const messagingTokenDefs = [
     {
       name: `${sandboxName}-discord-bridge`,
