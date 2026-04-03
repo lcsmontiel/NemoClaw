@@ -99,7 +99,7 @@ html_extra_path = ["project.json"]
 highlight_language = "console"
 
 html_theme_options = {
-    "public_docs_features": True,
+    # "public_docs_features": True, # TODO: Uncomment this when the docs are public
     "announcement": (
         "&#x1F514; NVIDIA NemoClaw is <strong>alpha software</strong>. APIs and behavior"
         " may change without notice. Do not use in production."
