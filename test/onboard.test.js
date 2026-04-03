@@ -1651,24 +1651,30 @@ const { createSandbox } = require(${onboardPath});
       const providerCommands = payload.commands.filter((e) =>
         e.command.includes("'provider' 'create'"),
       );
-      const discordProvider = providerCommands.find((e) => e.command.includes("discord-bridge"));
-      assert.ok(discordProvider, "expected discord-bridge provider create command");
+      const discordProvider = providerCommands.find((e) =>
+        e.command.includes("my-assistant-discord-bridge"),
+      );
+      assert.ok(discordProvider, "expected my-assistant-discord-bridge provider create command");
       assert.match(discordProvider.command, /'--credential' 'DISCORD_BOT_TOKEN'/);
 
-      const slackProvider = providerCommands.find((e) => e.command.includes("slack-bridge"));
-      assert.ok(slackProvider, "expected slack-bridge provider create command");
+      const slackProvider = providerCommands.find((e) =>
+        e.command.includes("my-assistant-slack-bridge"),
+      );
+      assert.ok(slackProvider, "expected my-assistant-slack-bridge provider create command");
       assert.match(slackProvider.command, /'--credential' 'SLACK_BOT_TOKEN'/);
 
-      const telegramProvider = providerCommands.find((e) => e.command.includes("telegram-bridge"));
-      assert.ok(telegramProvider, "expected telegram-bridge provider create command");
+      const telegramProvider = providerCommands.find((e) =>
+        e.command.includes("my-assistant-telegram-bridge"),
+      );
+      assert.ok(telegramProvider, "expected my-assistant-telegram-bridge provider create command");
       assert.match(telegramProvider.command, /'--credential' 'TELEGRAM_BOT_TOKEN'/);
 
       // Verify sandbox create includes --provider flags for all three
       const createCommand = payload.commands.find((e) => e.command.includes("'sandbox' 'create'"));
       assert.ok(createCommand, "expected sandbox create command");
-      assert.match(createCommand.command, /'--provider' 'discord-bridge'/);
-      assert.match(createCommand.command, /'--provider' 'slack-bridge'/);
-      assert.match(createCommand.command, /'--provider' 'telegram-bridge'/);
+      assert.match(createCommand.command, /'--provider' 'my-assistant-discord-bridge'/);
+      assert.match(createCommand.command, /'--provider' 'my-assistant-slack-bridge'/);
+      assert.match(createCommand.command, /'--provider' 'my-assistant-telegram-bridge'/);
 
       // Verify real token values are NOT in the sandbox create command
       assert.doesNotMatch(createCommand.command, /test-discord-token-value/);
@@ -1870,6 +1876,19 @@ const { createSandbox } = require(${onboardPath});
       assert.ok(
         payload.commands.every((entry) => !entry.command.includes("'sandbox' 'delete'")),
         "should NOT delete sandbox when providers already exist in gateway",
+      );
+
+      // Providers should still be upserted on reuse (credential refresh)
+      const providerUpserts = payload.commands.filter((entry) =>
+        entry.command.includes("'provider' 'create'"),
+      );
+      assert.ok(
+        providerUpserts.some((e) => e.command.includes("my-assistant-discord-bridge")),
+        "should upsert discord provider on reuse to refresh credentials",
+      );
+      assert.ok(
+        providerUpserts.some((e) => e.command.includes("my-assistant-slack-bridge")),
+        "should upsert slack provider on reuse to refresh credentials",
       );
     },
   );

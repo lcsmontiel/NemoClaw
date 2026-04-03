@@ -149,16 +149,19 @@ configure_messaging_channels() {
   [ -n "${TELEGRAM_BOT_TOKEN:-}" ] || [ -n "${DISCORD_BOT_TOKEN:-}" ] || [ -n "${SLACK_BOT_TOKEN:-}" ] || return 0
 
   if [ "$(id -u)" -ne 0 ]; then
-    echo "[channels] Messaging tokens detected but running as non-root — channels unavailable" >&2
-    return 0
+    echo "[channels] ERROR: Messaging tokens detected but running as non-root — cannot patch openclaw.json" >&2
+    echo "[channels] Messaging requires root to modify the immutable config. Recreate the sandbox or remove messaging tokens." >&2
+    return 1
   fi
 
   local config_path="/sandbox/.openclaw/openclaw.json"
   local hash_path="/sandbox/.openclaw/.config-hash"
 
-  # Temporarily make config writable
+  # Temporarily make config writable. Use a trap to guarantee restoration
+  # on early exit (set -e can bail before the manual chmod 444 below).
   chmod 644 "$config_path"
   chmod 644 "$hash_path"
+  trap 'chmod 444 "$config_path" "$hash_path" 2>/dev/null; chown root:root "$hash_path" 2>/dev/null' RETURN
 
   python3 - <<'PYCHANNELS'
 import json, os

@@ -799,6 +799,27 @@ function upsertProvider(name, type, credentialEnv, baseUrl, env = {}) {
 }
 
 /**
+ * Upsert all messaging providers that have tokens configured.
+ * Returns the list of provider names that were successfully created/updated.
+ * Exits the process if any upsert fails.
+ * @param {Array<{name: string, envKey: string, token: string|null}>} tokenDefs
+ * @returns {string[]} Provider names that were upserted.
+ */
+function upsertMessagingProviders(tokenDefs) {
+  const providers = [];
+  for (const { name, envKey, token } of tokenDefs) {
+    if (!token) continue;
+    const result = upsertProvider(name, "generic", envKey, null, { [envKey]: token });
+    if (!result.ok) {
+      console.error(`\n  ✗ Failed to create messaging provider '${name}': ${result.message}`);
+      process.exit(1);
+    }
+    providers.push(name);
+  }
+  return providers;
+}
+
+/**
  * Check whether an OpenShell provider exists in the gateway.
  *
  * Queries the gateway-level provider registry via `openshell provider get`.
@@ -2138,10 +2159,24 @@ async function createSandbox(
   // without provider attachments (security: prevents legacy raw-env-var leaks).
   const getMessagingToken = (envKey) =>
     getCredential(envKey) || normalizeCredentialValue(process.env[envKey]) || null;
-  const hasMessagingTokens =
-    !!getMessagingToken("DISCORD_BOT_TOKEN") ||
-    !!getMessagingToken("SLACK_BOT_TOKEN") ||
-    !!getMessagingToken("TELEGRAM_BOT_TOKEN");
+  const messagingTokenDefs = [
+    {
+      name: `${sandboxName}-discord-bridge`,
+      envKey: "DISCORD_BOT_TOKEN",
+      token: getMessagingToken("DISCORD_BOT_TOKEN"),
+    },
+    {
+      name: `${sandboxName}-slack-bridge`,
+      envKey: "SLACK_BOT_TOKEN",
+      token: getMessagingToken("SLACK_BOT_TOKEN"),
+    },
+    {
+      name: `${sandboxName}-telegram-bridge`,
+      envKey: "TELEGRAM_BOT_TOKEN",
+      token: getMessagingToken("TELEGRAM_BOT_TOKEN"),
+    },
+  ];
+  const hasMessagingTokens = messagingTokenDefs.some(({ token }) => !!token);
 
   // Reconcile local registry state with the live OpenShell gateway state.
   const liveExists = pruneStaleSandboxEntry(sandboxName);
@@ -2154,19 +2189,17 @@ async function createSandbox(
     // this avoids destroying sandboxes already created with provider attachments.
     const needsProviderMigration =
       hasMessagingTokens &&
-      [
-        { envKey: "DISCORD_BOT_TOKEN", provider: "discord-bridge" },
-        { envKey: "SLACK_BOT_TOKEN", provider: "slack-bridge" },
-        { envKey: "TELEGRAM_BOT_TOKEN", provider: "telegram-bridge" },
-      ].some(
-        ({ envKey, provider }) => getMessagingToken(envKey) && !providerExistsInGateway(provider),
-      );
+      messagingTokenDefs.some(({ name, token }) => token && !providerExistsInGateway(name));
 
     if (existingSandboxState === "ready" && process.env.NEMOCLAW_RECREATE_SANDBOX !== "1") {
       if (needsProviderMigration) {
         console.log(`  Sandbox '${sandboxName}' exists but messaging providers are not attached.`);
         console.log("  Recreating to ensure credentials flow through the provider pipeline.");
       } else {
+        // Upsert messaging providers even on reuse so credential changes take
+        // effect without requiring a full sandbox recreation. Only the
+        // --provider attachment flags need to be on the create path.
+        upsertMessagingProviders(messagingTokenDefs);
         ensureDashboardForward(sandboxName, chatUiUrl);
         if (isNonInteractive()) {
           note(`  [non-interactive] Sandbox '${sandboxName}' exists and is ready — reusing it`);
@@ -2219,33 +2252,7 @@ async function createSandbox(
   // the provider/placeholder system instead of raw env vars. The L7 proxy
   // rewrites Authorization headers (Bearer/Bot) and URL-path segments
   // (/bot{TOKEN}/) with real secrets at egress (OpenShell ≥ 0.0.20).
-  const messagingProviders = [];
-  const messagingTokenDefs = [
-    {
-      name: "discord-bridge",
-      envKey: "DISCORD_BOT_TOKEN",
-      token: getMessagingToken("DISCORD_BOT_TOKEN"),
-    },
-    {
-      name: "slack-bridge",
-      envKey: "SLACK_BOT_TOKEN",
-      token: getMessagingToken("SLACK_BOT_TOKEN"),
-    },
-    {
-      name: "telegram-bridge",
-      envKey: "TELEGRAM_BOT_TOKEN",
-      token: getMessagingToken("TELEGRAM_BOT_TOKEN"),
-    },
-  ];
-  for (const { name, envKey, token } of messagingTokenDefs) {
-    if (!token) continue;
-    const result = upsertProvider(name, "generic", envKey, null, { [envKey]: token });
-    if (!result.ok) {
-      console.error(`\n  ✗ Failed to create messaging provider '${name}': ${result.message}`);
-      process.exit(1);
-    }
-    messagingProviders.push(name);
-  }
+  const messagingProviders = upsertMessagingProviders(messagingTokenDefs);
   for (const p of messagingProviders) {
     createArgs.push("--provider", p);
   }

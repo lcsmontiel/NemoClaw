@@ -158,7 +158,7 @@ do_start() {
     printf "  │  Public URL:  %-40s│\n" "$tunnel_url"
   fi
 
-  echo "  │  Messaging:   via OpenClaw native channels          │"
+  echo "  │  Messaging:   via OpenClaw native channels (if configured) │"
   echo "  │                                                     │"
   echo "  │  Run 'openshell term' to monitor egress approvals   │"
   echo "  └─────────────────────────────────────────────────────┘"
