@@ -33,8 +33,11 @@ esac
 
 info "Detected $OS_LABEL ($ARCH_LABEL)"
 
-# Minimum version required for cgroup v2 fix (NVIDIA/OpenShell#329)
-MIN_VERSION="0.0.7"
+# OPENSHELL_PIN_VERSION (set by onboard.js from package.json) is the version
+# NemoClaw was tested against.  When set, download that exact release and treat
+# it as the minimum required version.  When unset, fall back to the static
+# floor (cgroup v2 fix, NVIDIA/OpenShell#329) and download the latest release.
+REQUIRED_VERSION="${OPENSHELL_PIN_VERSION:-0.0.7}"
 
 version_gte() {
   # Returns 0 (true) if $1 >= $2 — portable, no sort -V (BSD compat)
@@ -52,11 +55,11 @@ version_gte() {
 
 if command -v openshell >/dev/null 2>&1; then
   INSTALLED_VERSION="$(openshell --version 2>&1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1 || echo '0.0.0')"
-  if version_gte "$INSTALLED_VERSION" "$MIN_VERSION"; then
-    info "openshell already installed: $INSTALLED_VERSION (>= $MIN_VERSION)"
+  if version_gte "$INSTALLED_VERSION" "$REQUIRED_VERSION"; then
+    info "openshell already installed: $INSTALLED_VERSION (>= $REQUIRED_VERSION)"
     exit 0
   fi
-  warn "openshell $INSTALLED_VERSION is below minimum $MIN_VERSION — upgrading..."
+  warn "openshell $INSTALLED_VERSION is below required $REQUIRED_VERSION — upgrading..."
 fi
 
 info "Installing openshell CLI..."
@@ -80,18 +83,28 @@ tmpdir="$(mktemp -d)"
 trap 'rm -rf "$tmpdir"' EXIT
 
 CHECKSUM_FILE="openshell-checksums-sha256.txt"
+
+# When a pin is set, download that exact tag; otherwise download latest.
+GH_TAG_FLAG=()
+CURL_TAG_PATH="latest/download"
+if [[ -n "${OPENSHELL_PIN_VERSION:-}" ]]; then
+  GH_TAG_FLAG=(--tag "v${OPENSHELL_PIN_VERSION}")
+  CURL_TAG_PATH="download/v${OPENSHELL_PIN_VERSION}"
+  info "Pinned to OpenShell v${OPENSHELL_PIN_VERSION}"
+fi
+
 download_with_curl() {
-  curl -fsSL "https://github.com/NVIDIA/OpenShell/releases/latest/download/$ASSET" \
+  curl -fsSL "https://github.com/NVIDIA/OpenShell/releases/${CURL_TAG_PATH}/$ASSET" \
     -o "$tmpdir/$ASSET"
-  curl -fsSL "https://github.com/NVIDIA/OpenShell/releases/latest/download/$CHECKSUM_FILE" \
+  curl -fsSL "https://github.com/NVIDIA/OpenShell/releases/${CURL_TAG_PATH}/$CHECKSUM_FILE" \
     -o "$tmpdir/$CHECKSUM_FILE"
 }
 
 if command -v gh >/dev/null 2>&1; then
   if GH_PROMPT_DISABLED=1 GH_TOKEN="${GH_TOKEN:-${GITHUB_TOKEN:-}}" gh release download --repo NVIDIA/OpenShell \
-    --pattern "$ASSET" --dir "$tmpdir" 2>/dev/null \
+    "${GH_TAG_FLAG[@]}" --pattern "$ASSET" --dir "$tmpdir" 2>/dev/null \
     && GH_PROMPT_DISABLED=1 GH_TOKEN="${GH_TOKEN:-${GITHUB_TOKEN:-}}" gh release download --repo NVIDIA/OpenShell \
-      --pattern "$CHECKSUM_FILE" --dir "$tmpdir" 2>/dev/null; then
+      "${GH_TAG_FLAG[@]}" --pattern "$CHECKSUM_FILE" --dir "$tmpdir" 2>/dev/null; then
     : # gh succeeded
   else
     warn "gh CLI download failed (auth may not be configured) — falling back to curl"

@@ -438,6 +438,23 @@ function getInstalledOpenshellVersion(versionOutput = null) {
   return match[1];
 }
 
+/** True when `left` >= `right` (semver, major.minor.patch). */
+function versionGte(left = "0.0.0", right = "0.0.0") {
+  const lhs = String(left)
+    .split(".")
+    .map((p) => Number.parseInt(p, 10) || 0);
+  const rhs = String(right)
+    .split(".")
+    .map((p) => Number.parseInt(p, 10) || 0);
+  for (let i = 0; i < Math.max(lhs.length, rhs.length); i++) {
+    const a = lhs[i] || 0;
+    const b = rhs[i] || 0;
+    if (a > b) return true;
+    if (a < b) return false;
+  }
+  return true;
+}
+
 function getStableGatewayImageRef(versionOutput = null) {
   const version = getInstalledOpenshellVersion(versionOutput);
   if (!version) return null;
@@ -1595,9 +1612,14 @@ function getPortConflictServiceHints(platform = process.platform) {
 }
 
 function installOpenshell() {
+  const pinnedVersion = require("../../package.json").openshellVersion;
+  const installEnv = { ...process.env };
+  if (pinnedVersion) {
+    installEnv.OPENSHELL_PIN_VERSION = pinnedVersion;
+  }
   const result = spawnSync("bash", [path.join(SCRIPTS, "install-openshell.sh")], {
     cwd: ROOT,
-    env: process.env,
+    env: installEnv,
     stdio: ["ignore", "pipe", "pipe"],
     encoding: "utf-8",
     timeout: 300_000,
@@ -1744,10 +1766,21 @@ async function preflight() {
     console.log(`  ✓ Container runtime: ${runtime}`);
   }
 
-  // OpenShell CLI
+  // OpenShell CLI — install if missing or upgrade if below pinned version
+  const pinnedOpenshellVersion = require("../../package.json").openshellVersion;
   let openshellInstall = { localBin: null, futureShellPathHint: null };
-  if (!isOpenshellInstalled()) {
-    console.log("  openshell CLI not found. Installing...");
+  const installedOpenshellVersion = isOpenshellInstalled() ? getInstalledOpenshellVersion() : null;
+  const needsInstall =
+    !installedOpenshellVersion ||
+    (pinnedOpenshellVersion && !versionGte(installedOpenshellVersion, pinnedOpenshellVersion));
+  if (needsInstall) {
+    if (!installedOpenshellVersion) {
+      console.log("  openshell CLI not found. Installing...");
+    } else {
+      console.log(
+        `  openshell ${installedOpenshellVersion} is below required ${pinnedOpenshellVersion} — upgrading...`,
+      );
+    }
     openshellInstall = installOpenshell();
     if (!openshellInstall.installed) {
       console.error("  Failed to install openshell CLI.");
@@ -3808,4 +3841,5 @@ module.exports = {
   shouldIncludeBuildContextPath,
   writeSandboxConfigSyncFile,
   patchStagedDockerfile,
+  versionGte,
 };

@@ -31,6 +31,7 @@ import {
   printSandboxCreateRecoveryHints,
   resolveDashboardForwardTarget,
   shouldIncludeBuildContextPath,
+  versionGte,
   writeSandboxConfigSyncFile,
 } from "../bin/lib/onboard";
 
@@ -252,6 +253,14 @@ describe("onboard helpers", () => {
       "ghcr.io/nvidia/openshell/cluster:0.0.13",
     );
     expect(getStableGatewayImageRef("bogus")).toBe(null);
+  });
+
+  it("versionGte compares semver correctly for OpenShell pin checks", () => {
+    expect(versionGte("0.0.21", "0.0.21")).toBe(true);
+    expect(versionGte("0.0.22", "0.0.21")).toBe(true);
+    expect(versionGte("0.1.0", "0.0.21")).toBe(true);
+    expect(versionGte("0.0.20", "0.0.21")).toBe(false);
+    expect(versionGte("0.0.7", "0.0.21")).toBe(false);
   });
 
   it("treats the gateway as healthy only when nemoclaw is running and connected", () => {

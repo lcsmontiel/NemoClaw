@@ -531,6 +531,20 @@ describe("regression guards", () => {
       expect(src).toContain("shasum -a 256 -c");
     });
 
+    it("install-openshell.sh respects OPENSHELL_PIN_VERSION for tagged downloads", () => {
+      const src = fs.readFileSync(
+        path.join(import.meta.dirname, "..", "scripts", "install-openshell.sh"),
+        "utf-8",
+      );
+      // Env-var driven pin replaces hardcoded MIN_VERSION
+      expect(src).toContain("OPENSHELL_PIN_VERSION");
+      expect(src).toContain("REQUIRED_VERSION");
+      // gh path uses --tag flag when pin is set
+      expect(src).toContain('--tag "v${OPENSHELL_PIN_VERSION}"');
+      // curl path uses versioned download URL when pin is set
+      expect(src).toContain("download/v${OPENSHELL_PIN_VERSION}");
+    });
+
     it("install-openshell.sh falls back to curl when gh fails (#1318)", () => {
       const src = fs.readFileSync(
         path.join(import.meta.dirname, "..", "scripts", "install-openshell.sh"),
