@@ -45,7 +45,8 @@ exec_installer_from_ref() {
   trap 'rm -rf "${BOOTSTRAP_TMPDIR:-}"' EXIT
   source_root="${tmpdir}/source"
 
-  git clone --depth 1 --branch "$ref" https://github.com/NVIDIA/NemoClaw.git "$source_root"
+  git -c advice.detachedHead=false clone --quiet --depth 1 --branch "$ref" \
+    https://github.com/NVIDIA/NemoClaw.git "$source_root"
 
   payload_script="${source_root}/scripts/install.sh"
   legacy_script="${source_root}/install.sh"

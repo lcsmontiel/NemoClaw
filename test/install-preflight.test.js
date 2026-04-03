@@ -142,6 +142,9 @@ exit 99
       path.join(fakeBin, "git"),
       `#!/usr/bin/env bash
 printf '%s\\n' "$*" >> "$GIT_LOG_PATH"
+if [ "\${1:-}" = "-c" ]; then
+  shift 2
+fi
 if [ "$1" = "clone" ]; then
   target="\${@: -1}"
   mkdir -p "$target/nemoclaw"
@@ -237,6 +240,9 @@ exit 99
     writeExecutable(
       path.join(fakeBin, "git"),
       `#!/usr/bin/env bash
+if [ "\${1:-}" = "-c" ]; then
+  shift 2
+fi
 if [ "$1" = "clone" ]; then
   target="\${@: -1}"
   mkdir -p "$target/nemoclaw"
@@ -640,6 +646,9 @@ fi`,
     writeExecutable(
       path.join(fakeBin, "git"),
       `#!/usr/bin/env bash
+if [ "\${1:-}" = "-c" ]; then
+  shift 2
+fi
 if [ "$1" = "clone" ]; then
   target="\${@: -1}"
   mkdir -p "$target/nemoclaw"
@@ -707,6 +716,9 @@ exit 99
     writeExecutable(
       path.join(fakeBin, "git"),
       `#!/usr/bin/env bash
+if [ "\${1:-}" = "-c" ]; then
+  shift 2
+fi
 if [ "$1" = "clone" ]; then
   target="\${@: -1}"
   mkdir -p "$target/nemoclaw"
@@ -830,6 +842,9 @@ exit 99
     writeExecutable(
       path.join(fakeBin, "git"),
       `#!/usr/bin/env bash
+if [ "\${1:-}" = "-c" ]; then
+  shift 2
+fi
 if [ "$1" = "clone" ]; then
   target="\${@: -1}"
   mkdir -p "$target/nemoclaw"
@@ -1141,6 +1156,9 @@ exit 0`,
       path.join(fakeBin, "git"),
       `#!/usr/bin/env bash
 printf '%s\\n' "$*" >> "$GIT_LOG_PATH"
+if [ "\${1:-}" = "-c" ]; then
+  shift 2
+fi
 if [ "$1" = "clone" ]; then
   target="\${@: -1}"
   mkdir -p "$target/nemoclaw"
@@ -1598,6 +1616,9 @@ exit 0`,
 /usr/bin/curl "$@"`,
       gitStub: `#!/usr/bin/env bash
 printf '%s\\n' "$*" >> "$GIT_LOG_PATH"
+if [ "\${1:-}" = "-c" ]; then
+  shift 2
+fi
 if [ "$1" = "clone" ]; then
   target="\${@: -1}"
   mkdir -p "$target/nemoclaw"
@@ -1640,6 +1661,9 @@ done
 /usr/bin/curl "$@"`,
       gitStub: `#!/usr/bin/env bash
 printf '%s\\n' "$*" >> "$GIT_LOG_PATH"
+if [ "\${1:-}" = "-c" ]; then
+  shift 2
+fi
 if [ "$1" = "clone" ]; then
   target="\${@: -1}"
   mkdir -p "$target/nemoclaw"
@@ -1679,6 +1703,9 @@ exit 0`,
       curlStub: `#!/usr/bin/env bash
 /usr/bin/curl "$@"`,
       gitStub: `#!/usr/bin/env bash
+if [ "\${1:-}" = "-c" ]; then
+  shift 2
+fi
 if [ "$1" = "clone" ]; then
   target="\${@: -1}"
   mkdir -p "$target/scripts"
@@ -1727,6 +1754,9 @@ exit 0`,
       curlStub: `#!/usr/bin/env bash
 /usr/bin/curl "$@"`,
       gitStub: `#!/usr/bin/env bash
+if [ "\${1:-}" = "-c" ]; then
+  shift 2
+fi
 if [ "$1" = "clone" ]; then
   target="\${@: -1}"
   mkdir -p "$target/nemoclaw" "$target/bin/lib" "$target/scripts"
