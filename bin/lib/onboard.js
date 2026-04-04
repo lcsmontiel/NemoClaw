@@ -3157,64 +3157,45 @@ async function setupMessagingChannels() {
     return;
   }
 
-  // Show available channels with ●/○ markers (same UX as policy presets)
-  const configured = MESSAGING_CHANNELS.filter((c) => getMessagingToken(c.envKey));
-  const suggestions = configured.map((c) => c.name);
+  // Numbered toggle selector — pre-select channels that already have tokens
+  const enabled = new Set(
+    MESSAGING_CHANNELS.filter((c) => getMessagingToken(c.envKey)).map((c) => c.name),
+  );
 
-  console.log("");
-  console.log("  Available messaging channels:");
-  for (const ch of MESSAGING_CHANNELS) {
-    const hasToken = !!getMessagingToken(ch.envKey);
-    const marker = hasToken ? "●" : "○";
-    const status = hasToken ? " (configured)" : "";
-    console.log(`    ${marker} ${ch.name} — ${ch.description}${status}`);
+  const showList = () => {
+    console.log("");
+    console.log("  Available messaging channels:");
+    MESSAGING_CHANNELS.forEach((ch, i) => {
+      const marker = enabled.has(ch.name) ? "●" : "○";
+      const status = getMessagingToken(ch.envKey) ? " (configured)" : "";
+      console.log(`    [${i + 1}] ${marker} ${ch.name} — ${ch.description}${status}`);
+    });
+    console.log("");
+  };
+
+  showList();
+
+  while (true) {
+    const input = (await prompt("  Enter a number to toggle, or press Enter when done: ")).trim();
+    if (input === "") break;
+    const num = parseInt(input, 10);
+    if (isNaN(num) || num < 1 || num > MESSAGING_CHANNELS.length) {
+      console.log(`  Please enter a number between 1 and ${MESSAGING_CHANNELS.length}.`);
+      continue;
+    }
+    const ch = MESSAGING_CHANNELS[num - 1];
+    if (enabled.has(ch.name)) {
+      enabled.delete(ch.name);
+    } else {
+      enabled.add(ch.name);
+    }
+    showList();
   }
-  console.log("");
 
-  let selected;
-
-  if (suggestions.length > 0) {
-    const answer = (
-      await prompt(`  Keep configured channels (${suggestions.join(", ")})? [Y/n/list]: `)
-    )
-      .trim()
-      .toLowerCase();
-
-    if (answer === "n") {
-      console.log("  Skipping messaging channels.");
-      return;
-    }
-    if (answer === "list") {
-      const picks = await prompt("  Enter channel names (comma-separated): ");
-      selected = picks
-        .split(",")
-        .map((s) => s.trim().toLowerCase())
-        .filter(Boolean);
-    } else {
-      // Y or Enter — keep what's configured, nothing more to do
-      console.log(`  ✓ Keeping: ${suggestions.join(", ")}`);
-      return;
-    }
-  } else {
-    const answer = (
-      await prompt("  Enable messaging channels? [y/N/list]: ")
-    )
-      .trim()
-      .toLowerCase();
-
-    if (answer === "list") {
-      const picks = await prompt("  Enter channel names (comma-separated): ");
-      selected = picks
-        .split(",")
-        .map((s) => s.trim().toLowerCase())
-        .filter(Boolean);
-    } else if (answer === "y" || answer === "yes") {
-      // Enable all
-      selected = MESSAGING_CHANNELS.map((c) => c.name);
-    } else {
-      console.log("  Skipping messaging channels.");
-      return;
-    }
+  const selected = Array.from(enabled);
+  if (selected.length === 0) {
+    console.log("  Skipping messaging channels.");
+    return;
   }
 
   // For each selected channel, prompt for token if not already set
