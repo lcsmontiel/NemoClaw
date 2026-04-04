@@ -249,7 +249,8 @@ section "Phase 4: Plant marker file in sandbox workspace"
 MARKER_VALUE="nemoclaw-survival-$(date +%s)"
 
 # Write a marker file into /sandbox (the persistent workspace mount)
-if ssh "${SSH_OPTS[@]}" "$SSH_TARGET" "echo '$MARKER_VALUE' > /sandbox/.survival-marker" 2>/dev/null; then
+# shellcheck disable=SC2029  # client-side expansion is intentional
+if ssh "${SSH_OPTS[@]}" "$SSH_TARGET" "echo ${MARKER_VALUE} > /sandbox/.survival-marker" 2>/dev/null; then
   pass "Planted marker file: /sandbox/.survival-marker = $MARKER_VALUE"
 else
   fail "Could not plant marker file inside sandbox"
