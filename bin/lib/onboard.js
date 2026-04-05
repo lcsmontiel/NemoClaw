@@ -916,7 +916,6 @@ function upsertProvider(name, type, credentialEnv, baseUrl, env = {}) {
   const runOpts = { ignoreError: true, env, stdio: ["ignore", "pipe", "pipe"] };
   const createResult = runOpenshell(createArgs, runOpts);
   if (createResult.status === 0) {
-    console.log(`✓ Created provider ${name}`);
     return { ok: true };
   }
 
@@ -933,7 +932,6 @@ function upsertProvider(name, type, credentialEnv, baseUrl, env = {}) {
       message: output,
     };
   }
-  console.log(`✓ Updated provider ${name}`);
   return { ok: true };
 }
 

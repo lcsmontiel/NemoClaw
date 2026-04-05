@@ -1257,8 +1257,10 @@ const { setupInference } = require(${onboardPath});
     );
 
     assert.match(source, /stdio: \["ignore", "pipe", "pipe"\]/);
-    assert.match(source, /console\.log\(`✓ Created provider \$\{name\}`\)/);
-    assert.match(source, /console\.log\(`✓ Updated provider \$\{name\}`\)/);
+    // upsertProvider must NOT have its own console.log for Created/Updated —
+    // runner passthrough handles output, so duplicating it causes #1506.
+    assert.doesNotMatch(source, /console\.log\(`✓ Created provider \$\{name\}`\)/);
+    assert.doesNotMatch(source, /console\.log\(`✓ Updated provider \$\{name\}`\)/);
   });
 
   it("starts the sandbox step before prompting for the sandbox name", () => {
@@ -2001,6 +2003,44 @@ console.log(JSON.stringify({ result, commands }));
     assert.equal(payload.commands.length, 1);
     assert.match(payload.commands[0], /'provider' 'create' '--name' 'discord-bridge'/);
     assert.match(payload.commands[0], /'--credential' 'DISCORD_BOT_TOKEN'/);
+  });
+
+  it("upsertProvider does not add its own log line on top of runner output (#1506)", () => {
+    const repoRoot = path.join(import.meta.dirname, "..");
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-upsert-no-dup-"));
+    const fakeBin = path.join(tmpDir, "bin");
+    const scriptPath = path.join(tmpDir, "upsert-no-dup.js");
+    const onboardPath = JSON.stringify(path.join(repoRoot, "bin", "lib", "onboard.js"));
+    const runnerPath = JSON.stringify(path.join(repoRoot, "bin", "lib", "runner.js"));
+
+    fs.mkdirSync(fakeBin, { recursive: true });
+    fs.writeFileSync(path.join(fakeBin, "openshell"), "#!/usr/bin/env bash\nexit 0\n", {
+      mode: 0o755,
+    });
+
+    const script = `
+const runner = require(${runnerPath});
+runner.run = (command, opts = {}) => {
+  // Simulate runner passthrough: writeRedactedResult writes stdout to terminal
+  process.stdout.write("✓ Created provider test-bridge\\n");
+  return { status: 0, stdout: "✓ Created provider test-bridge", stderr: "" };
+};
+const { upsertProvider } = require(${onboardPath});
+upsertProvider("test-bridge", "generic", "TEST_TOKEN", null, { TEST_TOKEN: "tok" });
+`;
+    fs.writeFileSync(scriptPath, script);
+
+    const result = spawnSync(process.execPath, [scriptPath], {
+      cwd: repoRoot,
+      encoding: "utf-8",
+      env: { ...process.env, HOME: tmpDir, PATH: `${fakeBin}:${process.env.PATH || ""}` },
+    });
+
+    assert.equal(result.status, 0, result.stderr);
+    const lines = result.stdout
+      .split("\n")
+      .filter((l) => l.includes("Created provider test-bridge"));
+    assert.equal(lines.length, 1, `Expected 1 log line but got ${lines.length}: ${result.stdout}`);
   });
 
   it("upsertProvider falls back to update when create fails", () => {
