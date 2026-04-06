@@ -47,6 +47,8 @@ describe("provider model helpers", () => {
 
     expect(result).toEqual({
       ok: false,
+      httpStatus: 200,
+      curlStatus: 0,
       message: `Model 'missing' is not available from NVIDIA Endpoints. Checked ${BUILD_ENDPOINT_URL}/models.`,
     });
   });
@@ -96,6 +98,26 @@ describe("provider model helpers", () => {
         }),
       }),
     ).toEqual({ ok: true, validated: false });
+  });
+
+  it("preserves structured status fields through validation failures", () => {
+    const result = validateOpenAiLikeModel("Example", "https://example.test/v1", "gpt-4.1", "sk-x", {
+      runCurlProbeImpl: () => ({
+        ok: false,
+        httpStatus: 429,
+        curlStatus: 0,
+        body: "",
+        stderr: "",
+        message: "rate limited",
+      }),
+    });
+
+    expect(result).toEqual({
+      ok: false,
+      httpStatus: 429,
+      curlStatus: 0,
+      message: "Could not validate model against https://example.test/v1/models: rate limited",
+    });
   });
 
   it("accepts Anthropic model ids from either id or name fields", () => {
