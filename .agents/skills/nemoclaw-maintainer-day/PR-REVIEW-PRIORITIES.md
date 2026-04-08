@@ -12,16 +12,16 @@ Ordered list of what NemoClaw maintainers look for in a pull request. Higher ite
 
 ## Quality expectations (block if violated, but fixable via salvage)
 
-6. **Narrow scope** — each PR has one clear objective. Unrelated config changes, drive-by refactors, and tool setting diffs get reverted to `main`.
-7. **Contributor intent preserved** — the fix must match what the contributor intended. Stop and ask when the diff would change semantics or when intent is unclear.
-8. **Small, mergeable changes** — prefer substrate-first slicing: extract helper, add tests for current behavior, land fix on top. One file cluster per pass. If the next step is a large redesign, route to sequencing.
+1. **Narrow scope** — each PR has one clear objective. Unrelated config changes, drive-by refactors, and tool setting diffs get reverted to `main`.
+2. **Contributor intent preserved** — the fix must match what the contributor intended. Stop and ask when the diff would change semantics or when intent is unclear.
+3. **Small, mergeable changes** — prefer substrate-first slicing: extract helper, add tests for current behavior, land fix on top. One file cluster per pass. If the next step is a large redesign, route to sequencing.
 
 ## Queue ranking signals (inform priority, not approval)
 
-9. **Actionability** — PRs closest to done rank highest. A merge-ready PR outranks a near-miss; a near-miss outranks a blocked item.
-10. **Security-sensitive and actionable** — PRs touching risky code get a priority bump, but only when they are not otherwise blocked.
-11. **Staleness** — PRs idle for more than 7 days get a mild bump to prevent rot.
-12. **Hotspot relief** — PRs that reduce future conflict pressure in high-churn files are preferred over equivalent work elsewhere.
+1. **Actionability** — PRs closest to done rank highest. A merge-ready PR outranks a near-miss; a near-miss outranks a blocked item.
+2. **Security-sensitive and actionable** — PRs touching risky code get a priority bump, but only when they are not otherwise blocked.
+3. **Staleness** — PRs idle for more than 7 days get a mild bump to prevent rot.
+4. **Hotspot relief** — PRs that reduce future conflict pressure in high-churn files are preferred over equivalent work elsewhere.
 
 ## Daily cadence
 
