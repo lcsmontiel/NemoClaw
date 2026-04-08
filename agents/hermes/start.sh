@@ -6,10 +6,9 @@
 #
 # Mirrors scripts/nemoclaw-start.sh (OpenClaw) but launches `hermes gateway
 # start` instead of `openclaw gateway run`. Key differences:
-#   - No device-pairing auto-pair watcher (Hermes uses Bearer token auth)
+#   - No device-pairing auto-pair watcher (Hermes has no browser pairing)
 #   - Config is YAML (config.yaml + .env) not JSON (openclaw.json)
-#   - Gateway listens on port 8642, not 18789
-#   - Auth token is API_SERVER_KEY, not gateway.auth.token in JSON
+#   - Gateway listens on internal port 18642, socat forwards to 8642
 #
 # SECURITY: The gateway runs as a separate user so the sandboxed agent cannot
 # kill it or restart it with a tampered config. Config hash is verified at
@@ -112,64 +111,6 @@ deploy_config_to_writable() {
   echo "[config] Deployed verified config to ${HERMES_WRITABLE}" >&2
 }
 
-# Read the API server key from config.yaml for export to shell.
-_read_api_server_key() {
-  python3 - <<'PYTOKEN'
-import yaml
-try:
-    with open('/sandbox/.hermes-data/config.yaml') as f:
-        cfg = yaml.safe_load(f)
-    key = cfg.get('platforms', {}).get('api_server', {}).get('extra', {}).get('key', '')
-    print(key or '')
-except Exception:
-    print('')
-PYTOKEN
-}
-
-export_api_server_key() {
-  local key
-  key="$(_read_api_server_key)"
-  local marker_begin="# nemoclaw-api-key begin"
-  local marker_end="# nemoclaw-api-key end"
-
-  if [ -z "$key" ]; then
-    unset HERMES_API_SERVER_KEY
-    for rc_file in "${_SANDBOX_HOME}/.bashrc" "${_SANDBOX_HOME}/.profile"; do
-      if [ -f "$rc_file" ] && grep -qF "$marker_begin" "$rc_file" 2>/dev/null; then
-        local tmp
-        tmp="$(mktemp)"
-        awk -v b="$marker_begin" -v e="$marker_end" \
-          '$0==b{s=1;next} $0==e{s=0;next} !s' "$rc_file" >"$tmp"
-        cat "$tmp" >"$rc_file"
-        rm -f "$tmp"
-      fi
-    done
-    return
-  fi
-  export HERMES_API_SERVER_KEY="$key"
-
-  local escaped_key
-  escaped_key="$(printf '%s' "$key" | sed "s/'/'\\\\''/g")"
-  local snippet
-  snippet="${marker_begin}
-export HERMES_API_SERVER_KEY='${escaped_key}'
-${marker_end}"
-
-  for rc_file in "${_SANDBOX_HOME}/.bashrc" "${_SANDBOX_HOME}/.profile"; do
-    if [ -f "$rc_file" ] && grep -qF "$marker_begin" "$rc_file" 2>/dev/null; then
-      local tmp
-      tmp="$(mktemp)"
-      awk -v b="$marker_begin" -v e="$marker_end" \
-        '$0==b{s=1;next} $0==e{s=0;next} !s' "$rc_file" >"$tmp"
-      printf '%s\n' "$snippet" >>"$tmp"
-      cat "$tmp" >"$rc_file"
-      rm -f "$tmp"
-    elif [ -w "$rc_file" ] || [ -w "$(dirname "$rc_file")" ]; then
-      printf '\n%s\n' "$snippet" >>"$rc_file"
-    fi
-  done
-}
-
 install_configure_guard() {
   local marker_begin="# nemoclaw-configure-guard begin"
   local marker_end="# nemoclaw-configure-guard end"
@@ -267,18 +208,10 @@ configure_messaging_channels() {
 }
 
 print_dashboard_urls() {
-  local key local_url
-
-  key="$(_read_api_server_key)"
-
+  local local_url
   local_url="http://127.0.0.1:${PUBLIC_PORT}/v1"
-
   echo "[gateway] Hermes API: ${local_url}" >&2
   echo "[gateway] Health:     ${local_url%/v1}/health" >&2
-  if [ -n "$key" ]; then
-    echo "[gateway] API Key:    ${key:0:8}..." >&2
-  fi
-  echo "[gateway] Connect any OpenAI-compatible frontend to this endpoint." >&2
 }
 
 # ── socat forwarder ──────────────────────────────────────────────
@@ -383,7 +316,6 @@ if [ "$(id -u)" -ne 0 ]; then
     exit 1
   fi
   deploy_config_to_writable
-  export_api_server_key
   install_configure_guard
   configure_messaging_channels
 
@@ -410,7 +342,6 @@ fi
 
 verify_config_integrity
 deploy_config_to_writable
-export_api_server_key
 install_configure_guard
 configure_messaging_channels
 

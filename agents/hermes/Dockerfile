@@ -37,10 +37,6 @@ ARG CHAT_UI_URL=http://127.0.0.1:8642
 ARG NEMOCLAW_MESSAGING_CHANNELS_B64=W10=
 ARG NEMOCLAW_MESSAGING_ALLOWED_IDS_B64=e30=
 ARG NEMOCLAW_BUILD_ID=default
-# API server auth key — if empty, all requests allowed (local-only mode).
-ARG NEMOCLAW_API_SERVER_KEY=
-# Hermes gateway platforms to enable (comma-separated: telegram,discord,slack)
-ARG NEMOCLAW_GATEWAY_PLATFORMS=
 
 # Promote build-args to env vars for the config generation script.
 ENV NEMOCLAW_MODEL=${NEMOCLAW_MODEL} \
@@ -48,9 +44,7 @@ ENV NEMOCLAW_MODEL=${NEMOCLAW_MODEL} \
     NEMOCLAW_INFERENCE_BASE_URL=${NEMOCLAW_INFERENCE_BASE_URL} \
     CHAT_UI_URL=${CHAT_UI_URL} \
     NEMOCLAW_MESSAGING_CHANNELS_B64=${NEMOCLAW_MESSAGING_CHANNELS_B64} \
-    NEMOCLAW_MESSAGING_ALLOWED_IDS_B64=${NEMOCLAW_MESSAGING_ALLOWED_IDS_B64} \
-    NEMOCLAW_API_SERVER_KEY=${NEMOCLAW_API_SERVER_KEY} \
-    NEMOCLAW_GATEWAY_PLATFORMS=${NEMOCLAW_GATEWAY_PLATFORMS}
+    NEMOCLAW_MESSAGING_ALLOWED_IDS_B64=${NEMOCLAW_MESSAGING_ALLOWED_IDS_B64}
 
 WORKDIR /sandbox
 USER sandbox
@@ -70,13 +64,6 @@ RUN python3 /opt/nemoclaw-generate-config.py
 RUN mkdir -p /sandbox/.hermes-data/plugins/nemoclaw \
     && cp /opt/nemoclaw-hermes-plugin/* /sandbox/.hermes-data/plugins/nemoclaw/ \
     || true
-
-# Write a default SOUL.md for the sandboxed agent
-RUN printf '%s\n' \
-    'You are a helpful AI assistant running inside an NVIDIA OpenShell sandbox.' \
-    'Your inference is routed through NemoClaw. You have access to terminal,' \
-    'file, and web tools. Be concise and helpful.' \
-    > /sandbox/.hermes-data/memories/SOUL.md
 
 # Lock .hermes via DAC: chown to root so sandbox user cannot modify config.
 # Same pattern as OpenClaw — Landlock provides defense-in-depth.

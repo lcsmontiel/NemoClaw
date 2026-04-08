@@ -6,7 +6,13 @@ Generate Hermes config.yaml and .env from NemoClaw build-arg env vars.
 
 Called at Docker image build time. Reads NEMOCLAW_* env vars and writes:
   ~/.hermes/config.yaml  — Hermes configuration (immutable at runtime)
-  ~/.hermes/.env         — API keys and secrets (immutable at runtime)
+  ~/.hermes/.env         — Messaging token placeholders (immutable at runtime)
+
+Only sets what's required for Hermes to run inside OpenShell:
+  - Model and inference endpoint (custom provider pointing at inference.local)
+  - API server on internal port (socat forwards to public port)
+  - Messaging platform tokens (if configured during onboard)
+Everything else uses Hermes defaults.
 """
 
 import base64
@@ -19,6 +25,7 @@ import yaml
 def main():
     model = os.environ["NEMOCLAW_MODEL"]
     base_url = os.environ["NEMOCLAW_INFERENCE_BASE_URL"]
+
     msg_channels = json.loads(
         base64.b64decode(
             os.environ.get("NEMOCLAW_MESSAGING_CHANNELS_B64", "W10=") or "W10="
@@ -30,7 +37,8 @@ def main():
         ).decode("utf-8")
     )
 
-    # Core config
+    # Only what's needed: model routing and API server port.
+    # Everything else (memory, skills, display, agent config) uses Hermes defaults.
     config = {
         "_config_version": 12,
         "model": {
@@ -38,28 +46,9 @@ def main():
             "provider": "custom",
             "base_url": base_url,
         },
-        "terminal": {
-            "backend": "local",
-            "timeout": 180,
-        },
-        "agent": {
-            "max_turns": 60,
-            "reasoning_effort": "medium",
-        },
-        "memory": {
-            "memory_enabled": True,
-            "user_profile_enabled": True,
-        },
-        "skills": {
-            "creation_nudge_interval": 15,
-        },
-        "display": {
-            "compact": False,
-            "tool_progress": "all",
-        },
     }
 
-    # Messaging platforms
+    # Messaging platforms (if configured during onboard)
     token_env = {
         "telegram": "TELEGRAM_BOT_TOKEN",
         "discord": "DISCORD_BOT_TOKEN",
@@ -81,12 +70,9 @@ def main():
     if platforms_config:
         config["platforms"] = platforms_config
 
-    # API server config
-    # No API key — the sandbox is already network-isolated by OpenShell.
-    # Adding auth here just creates friction for testing and port-forwarded access.
-    # Hermes binds to 127.0.0.1 regardless of host config (upstream bug).
-    # Use an internal port (18642); the startup script's socat forwarder
-    # exposes 0.0.0.0:8642 -> 127.0.0.1:18642 for OpenShell port forwarding.
+    # API server — internal port only.
+    # Hermes binds to 127.0.0.1 regardless of config (upstream bug).
+    # socat in start.sh forwards 0.0.0.0:8642 -> 127.0.0.1:18642.
     config.setdefault("platforms", {})["api_server"] = {
         "enabled": True,
         "extra": {
@@ -101,11 +87,8 @@ def main():
         yaml.dump(config, f, default_flow_style=False, sort_keys=False)
     os.chmod(config_path, 0o600)
 
-    # Write .env
-    env_lines = [
-        "API_SERVER_PORT=18642",
-        "API_SERVER_HOST=127.0.0.1",
-    ]
+    # Write .env — only messaging token placeholders
+    env_lines = []
     for ch in msg_channels:
         if ch in token_env:
             env_lines.append(
@@ -114,7 +97,7 @@ def main():
 
     env_path = os.path.expanduser("~/.hermes/.env")
     with open(env_path, "w") as f:
-        f.write("\n".join(env_lines) + "\n")
+        f.write("\n".join(env_lines) + "\n" if env_lines else "")
     os.chmod(env_path, 0o600)
 
     print(f"[config] Wrote {config_path} (model={model}, provider=custom)")
