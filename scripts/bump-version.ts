@@ -406,7 +406,10 @@ function createReleasePr(options: Options, previousVersion: string, tagName: str
   git(["commit", "-m", `chore(release): bump version to ${tagName}`]);
   git(["push", "-u", "origin", options.branchName]);
 
-  const prBody = buildPrBody(previousVersion, options.version);
+  const prBody = buildPrBody(previousVersion, options.version, {
+    ranTests: !options.skipTests,
+    ranFormat: false,
+  });
   const prUrl = run(
     "gh",
     [
@@ -441,7 +444,12 @@ function gitRemoteBranchExists(branchName: string): boolean {
   return run("git", ["ls-remote", "--exit-code", "--heads", "origin", branchName], { allowFailure: true }).exitCode === 0;
 }
 
-function buildPrBody(previousVersion: string, nextVersion: string): string {
+type PrBodyOptions = {
+  ranTests: boolean;
+  ranFormat: boolean;
+};
+
+function buildPrBody(previousVersion: string, nextVersion: string, options: PrBodyOptions): string {
   const gitUserName = run("git", ["config", "user.name"]).trim();
   const gitUserEmail = run("git", ["config", "user.email"]).trim();
 
@@ -457,9 +465,6 @@ function buildPrBody(previousVersion: string, nextVersion: string): string {
     `Bump NemoClaw from ${previousVersion} to ${nextVersion} across the CLI package, plugin package,`,
     "blueprint manifest, installer defaults, and versioned docs references.",
     "",
-    "## Related Issue",
-    "Fixes #1577.",
-    "",
     "## Changes",
     `- bump release version from ${previousVersion} to ${nextVersion}`,
     "- update installer and docs version references to match the npm/package version",
@@ -472,8 +477,8 @@ function buildPrBody(previousVersion: string, nextVersion: string): string {
     "- [ ] Doc only. Includes code sample changes.",
     "",
     "## Testing",
-    "- [ ] `npx prek run --all-files` passes (or equivalently `make check`).",
-    "- [x] `npm test` passes.",
+    `- [${options.ranFormat ? "x" : " "}] \`npx prek run --all-files\` passes (or equivalently \`make check\`).`,
+    `- [${options.ranTests ? "x" : " "}] \`npm test\` passes.`,
     "- [ ] `make docs` builds without warnings. (for doc-only changes)",
     "",
     "## Checklist",
@@ -484,7 +489,7 @@ function buildPrBody(previousVersion: string, nextVersion: string): string {
     "- [ ] I have read and followed the [style guide](https://github.com/NVIDIA/NemoClaw/blob/main/docs/CONTRIBUTING.md). (for doc-only changes)",
     "",
     "### Code Changes",
-    "- [x] Formatters applied — `npx prek run --all-files` auto-fixes formatting (or `make format` for targeted runs).",
+    `- [${options.ranFormat ? "x" : " "}] Formatters applied — \`npx prek run --all-files\` auto-fixes formatting (or \`make format\` for targeted runs).`,
     "- [ ] Tests added or updated for new or changed behavior.",
     "- [x] No secrets, API keys, or credentials committed.",
     "- [x] Doc pages updated for any user-facing behavior changes (new commands, changed defaults, new features, bug fixes that contradict existing docs).",
