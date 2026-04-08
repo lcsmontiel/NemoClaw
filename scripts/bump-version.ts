@@ -67,7 +67,6 @@ function main(): void {
 
   const nextDocsVersion = `v${options.version}`;
   const docsSegment = options.docsMode === "versioned" ? options.version : "latest";
-  const nextDocsBaseUrl = `https://docs.nvidia.com/nemoclaw/${docsSegment}/`;
   const nextDocsPublicUrl = `https://docs.nvidia.com/nemoclaw/${docsSegment}`;
 
   if (options.dryRun) {
@@ -79,11 +78,11 @@ function main(): void {
   updatePackageJson(PLUGIN_PACKAGE_JSON, options.version);
   updateBlueprintVersion(options.version);
   updateInstallScriptDefaultVersion(previousVersion, options.version);
-  updateDocsConf(options.version, nextDocsBaseUrl);
+  updateDocsConf(options.version);
   updateDocsVersionLinks(nextDocsPublicUrl);
   updateInstallAndUninstallDocs(nextDocsVersion);
 
-  verifyVersionState(options.version, nextDocsBaseUrl, nextDocsPublicUrl, nextDocsVersion);
+  verifyVersionState(options.version, nextDocsPublicUrl, nextDocsVersion);
 
   if (!options.skipTests) {
     runChecks(options.version);
@@ -292,22 +291,15 @@ function updateInstallScriptDefaultVersion(previousVersion: string, nextVersion:
   );
 }
 
-function updateDocsConf(nextVersion: string, nextDocsBaseUrl: string): void {
+function updateDocsConf(nextVersion: string): void {
   const current = readText(DOCS_CONF);
   const releaseReplacement = `release = "${nextVersion}"`;
-  const baseUrlReplacement = `html_baseurl = "${nextDocsBaseUrl}"`;
 
   let updated = current;
   if (/^release = ".*"$/m.test(updated)) {
     updated = updated.replace(/^release = ".*"$/m, releaseReplacement);
   } else {
     throw new Error("Could not find release assignment in docs/conf.py");
-  }
-
-  if (/^html_baseurl = ".*"$/m.test(updated)) {
-    updated = updated.replace(/^html_baseurl = ".*"$/m, baseUrlReplacement);
-  } else {
-    throw new Error("Could not find html_baseurl assignment in docs/conf.py");
   }
 
   writeFileSync(DOCS_CONF, updated, "utf8");
@@ -356,7 +348,7 @@ function replaceCodeBlockLine(filePath: string, pattern: RegExp, replacement: st
   writeFileSync(filePath, updated, "utf8");
 }
 
-function verifyVersionState(version: string, docsBaseUrl: string, docsPublicUrl: string, docsDisplayVersion: string): void {
+function verifyVersionState(version: string, docsPublicUrl: string, docsDisplayVersion: string): void {
   assertEqual(readJson<PackageJson>(ROOT_PACKAGE_JSON).version, version, "root package.json version mismatch");
   assertEqual(readJson<PackageJson>(PLUGIN_PACKAGE_JSON).version, version, "plugin package.json version mismatch");
 
@@ -365,7 +357,6 @@ function verifyVersionState(version: string, docsBaseUrl: string, docsPublicUrl:
 
   requireContains(INSTALL_SH, `DEFAULT_NEMOCLAW_VERSION="${version}"`);
   requireContains(DOCS_CONF, `release = "${version}"`);
-  requireContains(DOCS_CONF, `html_baseurl = "${docsBaseUrl}"`);
   requireContains(README_MD, docsPublicUrl);
   requireContains(README_MD, docsDisplayVersion);
   requireContains(QUICKSTART_MD, docsDisplayVersion);
@@ -444,6 +435,16 @@ function gitRemoteBranchExists(branchName: string): boolean {
 }
 
 function buildPrBody(previousVersion: string, nextVersion: string): string {
+  const gitUserName = run("git", ["config", "user.name"]).trim();
+  const gitUserEmail = run("git", ["config", "user.email"]).trim();
+
+  if (!gitUserName) {
+    throw new Error("git config user.name is required to build the PR sign-off");
+  }
+  if (!gitUserEmail) {
+    throw new Error("git config user.email is required to build the PR sign-off");
+  }
+
   return [
     "## Summary",
     `Bump NemoClaw from ${previousVersion} to ${nextVersion} across the CLI package, plugin package,`,
@@ -487,7 +488,7 @@ function buildPrBody(previousVersion: string, nextVersion: string): string {
     "- [x] Cross-references and links verified.",
     "",
     "---",
-    "Signed-off-by: Brandon Pelfrey <bpelfrey@nvidia.com>",
+    `Signed-off-by: ${gitUserName} <${gitUserEmail}>`,
   ].join("\n");
 }
 
