@@ -137,7 +137,7 @@ function fetchOpenPrs(repo: string, approvedOnly: boolean): PrData[] {
 
   const out = run("gh", [
     "pr", "list", "--repo", repo,
-    "--state", "open", "--limit", "100",
+    "--state", "open", "--limit", "50",
     "--json", basicFields,
   ]);
   if (!out) return [];
