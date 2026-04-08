@@ -74,17 +74,39 @@ CHAT_UI_URL="${CHAT_UI_URL:-http://127.0.0.1:8642}"
 PUBLIC_PORT=8642
 HERMES="$(command -v hermes)" # Resolve once, use absolute path everywhere
 
+# Hermes writes state files (PID, state.db, .channel_directory) directly into
+# HERMES_HOME. We cannot point it at the immutable /sandbox/.hermes dir.
+# Instead: verify integrity of the immutable source, then copy config to the
+# writable .hermes-data dir so Hermes can coexist with its own state files.
+HERMES_IMMUTABLE="/sandbox/.hermes"
+HERMES_WRITABLE="/sandbox/.hermes-data"
+
 # ── Config integrity check ──────────────────────────────────────
 verify_config_integrity() {
-  local hash_file="/sandbox/.hermes/.config-hash"
+  local hash_file="${HERMES_IMMUTABLE}/.config-hash"
   if [ ! -f "$hash_file" ]; then
     echo "[SECURITY] Config hash file missing — refusing to start without integrity verification" >&2
     return 1
   fi
-  if ! (cd /sandbox/.hermes && sha256sum -c "$hash_file" --status 2>/dev/null); then
+  if ! (cd "${HERMES_IMMUTABLE}" && sha256sum -c "$hash_file" --status 2>/dev/null); then
     echo "[SECURITY] Hermes config integrity check FAILED — config may have been tampered with" >&2
     return 1
   fi
+}
+
+# Copy verified immutable config into the writable HERMES_HOME so the
+# gateway process can read it alongside its own state files.
+deploy_config_to_writable() {
+  # When running as root, use gosu to write as sandbox user (owner of .hermes-data).
+  if [ "$(id -u)" -eq 0 ]; then
+    gosu sandbox cp "${HERMES_IMMUTABLE}/config.yaml" "${HERMES_WRITABLE}/config.yaml"
+    gosu sandbox cp "${HERMES_IMMUTABLE}/.env" "${HERMES_WRITABLE}/.env"
+  else
+    cp "${HERMES_IMMUTABLE}/config.yaml" "${HERMES_WRITABLE}/config.yaml"
+    cp "${HERMES_IMMUTABLE}/.env" "${HERMES_WRITABLE}/.env"
+  fi
+  chmod 600 "${HERMES_WRITABLE}/config.yaml" "${HERMES_WRITABLE}/.env" 2>/dev/null || true
+  echo "[config] Deployed verified config to ${HERMES_WRITABLE}" >&2
 }
 
 # Read the API server key from config.yaml for export to shell.
@@ -92,7 +114,7 @@ _read_api_server_key() {
   python3 - <<'PYTOKEN'
 import yaml
 try:
-    with open('/sandbox/.hermes/config.yaml') as f:
+    with open('/sandbox/.hermes-data/config.yaml') as f:
         cfg = yaml.safe_load(f)
     key = cfg.get('platforms', {}).get('api_server', {}).get('extra', {}).get('key', '')
     print(key or '')
@@ -324,12 +346,13 @@ echo 'Setting up NemoClaw (Hermes)...' >&2
 if [ "$(id -u)" -ne 0 ]; then
   echo "[gateway] Running as non-root (uid=$(id -u)) — privilege separation disabled" >&2
   export HOME=/sandbox
-  export HERMES_HOME=/sandbox/.hermes
+  export HERMES_HOME="${HERMES_WRITABLE}"
 
   if ! verify_config_integrity; then
     echo "[SECURITY] Config integrity check failed — refusing to start (non-root mode)" >&2
     exit 1
   fi
+  deploy_config_to_writable
   export_api_server_key
   install_configure_guard
   configure_messaging_channels
@@ -341,8 +364,8 @@ if [ "$(id -u)" -ne 0 ]; then
   touch /tmp/gateway.log
   chmod 600 /tmp/gateway.log
 
-  # Start Hermes gateway in background
-  HERMES_HOME=/sandbox/.hermes nohup "$HERMES" gateway start >/tmp/gateway.log 2>&1 &
+  # Start Hermes gateway in background (foreground mode, not systemd)
+  HERMES_HOME="${HERMES_WRITABLE}" nohup "$HERMES" gateway run >/tmp/gateway.log 2>&1 &
   GATEWAY_PID=$!
   echo "[gateway] hermes gateway launched (pid $GATEWAY_PID)" >&2
   trap cleanup SIGTERM SIGINT
@@ -355,6 +378,7 @@ fi
 # ── Root path (full privilege separation via gosu) ─────────────
 
 verify_config_integrity
+deploy_config_to_writable
 export_api_server_key
 install_configure_guard
 configure_messaging_channels
@@ -375,7 +399,7 @@ validate_hermes_symlinks
 harden_hermes_symlinks
 
 # Start the gateway as the 'gateway' user.
-HERMES_HOME=/sandbox/.hermes nohup gosu gateway "$HERMES" gateway start >/tmp/gateway.log 2>&1 &
+HERMES_HOME="${HERMES_WRITABLE}" nohup gosu gateway "$HERMES" gateway run >/tmp/gateway.log 2>&1 &
 GATEWAY_PID=$!
 echo "[gateway] hermes gateway launched as 'gateway' user (pid $GATEWAY_PID)" >&2
 trap cleanup SIGTERM SIGINT

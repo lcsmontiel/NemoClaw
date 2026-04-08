@@ -15,7 +15,7 @@ homepage: "https://github.com/NousResearch/hermes-agent"
 # ── Binary & process ────────────────────────────────────────────
 install_method: curl  # curl install.sh | bash
 binary_path: /usr/local/bin/hermes
-gateway_command: "hermes gateway start"
+gateway_command: "hermes gateway run"
 
 # ── Health probe ────────────────────────────────────────────────
 # The API server adapter listens on 8642 by default and exposes

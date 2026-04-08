@@ -19,6 +19,9 @@ RUN (apt-get remove --purge -y gcc gcc-12 g++ g++-12 cpp cpp-12 make \
 # Copy NemoClaw plugin for Hermes (Python-based)
 COPY agents/hermes/plugin/ /opt/nemoclaw-hermes-plugin/
 
+# Copy config generation script
+COPY agents/hermes/generate-config.py /opt/nemoclaw-generate-config.py
+
 # Copy blueprint (shared infrastructure)
 COPY nemoclaw-blueprint/ /opt/nemoclaw-blueprint/
 
@@ -59,76 +62,9 @@ RUN mkdir -p /sandbox/.nemoclaw/blueprints/0.1.0 \
 # Generate Hermes config.yaml and .env from build args.
 # config.yaml is immutable at runtime (Landlock read-only on /sandbox/.hermes).
 # .env holds API key placeholders for OpenShell provider pipeline.
-RUN python3 -c "\
-import base64, json, os, secrets, yaml; \
-model = os.environ['NEMOCLAW_MODEL']; \
-base_url = os.environ['NEMOCLAW_INFERENCE_BASE_URL']; \
-api_key = os.environ.get('NEMOCLAW_API_SERVER_KEY', ''); \
-platforms_raw = os.environ.get('NEMOCLAW_GATEWAY_PLATFORMS', ''); \
-msg_channels = json.loads(base64.b64decode(os.environ.get('NEMOCLAW_MESSAGING_CHANNELS_B64', 'W10=') or 'W10=').decode('utf-8')); \
-_allowed_ids = json.loads(base64.b64decode(os.environ.get('NEMOCLAW_MESSAGING_ALLOWED_IDS_B64', 'e30=') or 'e30=').decode('utf-8')); \
-config = { \
-    '_config_version': 12, \
-    'model': { \
-        'default': model, \
-        'provider': 'custom', \
-        'base_url': base_url, \
-    }, \
-    'terminal': { \
-        'backend': 'local', \
-        'timeout': 180, \
-    }, \
-    'agent': { \
-        'max_turns': 60, \
-        'reasoning_effort': 'medium', \
-    }, \
-    'memory': { \
-        'memory_enabled': True, \
-        'user_profile_enabled': True, \
-    }, \
-    'skills': { \
-        'creation_nudge_interval': 15, \
-    }, \
-    'display': { \
-        'compact': False, \
-        'tool_progress': 'all', \
-    }, \
-}; \
-platforms_config = {}; \
-_token_env = {'telegram': 'TELEGRAM_BOT_TOKEN', 'discord': 'DISCORD_BOT_TOKEN', 'slack': 'SLACK_BOT_TOKEN'}; \
-for ch in msg_channels: \
-    if ch in _token_env: \
-        p_cfg = {'enabled': True, 'token': f'openshell:resolve:env:{_token_env[ch]}'}; \
-        if ch in _allowed_ids and _allowed_ids[ch]: \
-            p_cfg['allowed_users'] = ','.join(str(uid) for uid in _allowed_ids[ch]); \
-        platforms_config[ch] = p_cfg; \
-if platforms_config: \
-    config['platforms'] = platforms_config; \
-api_server_key = api_key or secrets.token_hex(32); \
-config.setdefault('platforms', {})['api_server'] = { \
-    'enabled': True, \
-    'extra': { \
-        'port': 8642, \
-        'host': '127.0.0.1', \
-        'key': api_server_key, \
-    }, \
-}; \
-config_path = os.path.expanduser('~/.hermes/config.yaml'); \
-with open(config_path, 'w') as f: \
-    yaml.dump(config, f, default_flow_style=False, sort_keys=False); \
-os.chmod(config_path, 0o600); \
-env_lines = [ \
-    f'API_SERVER_KEY={api_server_key}', \
-    f'API_SERVER_PORT=8642', \
-    f'API_SERVER_HOST=127.0.0.1', \
-]; \
-for ch in msg_channels: \
-    if ch in _token_env: \
-        env_lines.append(f'{_token_env[ch]}=openshell:resolve:env:{_token_env[ch]}'); \
-env_path = os.path.expanduser('~/.hermes/.env'); \
-with open(env_path, 'w') as f: \
-    f.write('\\n'.join(env_lines) + '\\n'); \
-os.chmod(env_path, 0o600)"
+# SECURITY: Uses a separate script file instead of inline python3 -c to avoid
+# code injection via build-arg interpolation (same concern as OpenClaw C-2).
+RUN python3 /opt/nemoclaw-generate-config.py
 
 # Install NemoClaw plugin into Hermes
 RUN mkdir -p /sandbox/.hermes-data/plugins/nemoclaw \
