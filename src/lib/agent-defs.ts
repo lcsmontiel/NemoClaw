@@ -63,6 +63,7 @@ export interface AgentDefinition {
   readonly dockerfilePath: string | null;
   readonly startScriptPath: string | null;
   readonly policyAdditionsPath: string | null;
+  readonly policyPermissivePath: string | null;
   readonly pluginDir: string | null;
   readonly legacyPaths: AgentLegacyPaths | null;
   [key: string]: unknown;
@@ -176,6 +177,11 @@ export function loadAgent(name: string): AgentDefinition {
 
     get policyAdditionsPath(): string | null {
       const p = path.join(agentDir, "policy-additions.yaml");
+      return fs.existsSync(p) ? p : null;
+    },
+
+    get policyPermissivePath(): string | null {
+      const p = path.join(agentDir, "policy-permissive.yaml");
       return fs.existsSync(p) ? p : null;
     },
 

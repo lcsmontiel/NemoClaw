@@ -2424,11 +2424,13 @@ async function createSandbox(
 
   // Create sandbox (use -- echo to avoid dropping into interactive shell)
   // Pass the base policy so sandbox starts in proxy mode (required for policy updates later)
+  const globalPermissivePath = path.join(ROOT, "nemoclaw-blueprint", "policies", "openclaw-sandbox-permissive.yaml");
   let basePolicyPath;
   if (dangerouslySkipPermissions) {
-    // Permissive mode always wins — even for agent sandboxes.
-    // The permissive policy is a superset covering all agents' needs.
-    basePolicyPath = path.join(ROOT, "nemoclaw-blueprint", "policies", "openclaw-sandbox-permissive.yaml");
+    // Permissive mode: use agent-specific permissive policy if available,
+    // otherwise fall back to the global permissive policy.
+    const agentPermissive = agent && agentOnboard.getAgentPermissivePolicyPath(agent);
+    basePolicyPath = agentPermissive || globalPermissivePath;
   } else {
     const defaultPolicyPath = path.join(ROOT, "nemoclaw-blueprint", "policies", "openclaw-sandbox.yaml");
     basePolicyPath = (agent && agentOnboard.getAgentPolicyPath(agent)) || defaultPolicyPath;
