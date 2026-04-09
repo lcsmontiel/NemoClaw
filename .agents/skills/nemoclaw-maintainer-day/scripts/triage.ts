@@ -20,6 +20,8 @@ import {
   run,
   parseStringArg,
   parseIntArg,
+  REQUIRED_CHECK_NAMES,
+  type StatusCheck,
   SCORE_MERGE_NOW,
   SCORE_REVIEW_READY,
   SCORE_NEAR_MISS,
@@ -51,11 +53,7 @@ interface PrData {
   mergeStateStatus: string;
   reviewDecision: string;
   labels: Array<{ name: string }>;
-  statusCheckRollup: Array<{
-    name: string;
-    status: string;
-    conclusion: string;
-  }>;
+  statusCheckRollup: StatusCheck[];
 }
 
 interface ClassifiedPr {
@@ -217,31 +215,26 @@ function classifyPr(pr: PrData): ClassifiedPr {
   // contributors need "Approve and run" before pull_request workflows
   // execute. Until then only pull_request_target checks and external
   // bots appear — treat that as not-green.
-  const REQUIRED_CHECKS = ["checks", "commit-lint", "dco-check"];
   const presentNames = new Set(
-    checks.map((c) => {
-      const asAny = c as Record<string, string>;
-      return asAny.name ?? asAny.context ?? "";
-    }).filter(Boolean),
+    checks.map((c) => c.name ?? c.context ?? "").filter(Boolean),
   );
-  if (REQUIRED_CHECKS.some((name) => !presentNames.has(name))) {
+  if (REQUIRED_CHECK_NAMES.some((name) => !presentNames.has(name))) {
     checksGreen = false;
   }
 
   for (const check of checks) {
     if (!checksGreen) break;
-    const asAny = check as Record<string, string>;
     // StatusContext uses "state", CheckRun uses "conclusion"+"status"
-    if (asAny.state) {
+    if (check.state) {
       // StatusContext: state is SUCCESS/FAILURE/PENDING/ERROR
-      if (!passingConclusions.has(asAny.state.toUpperCase())) {
+      if (!passingConclusions.has(check.state.toUpperCase())) {
         checksGreen = false;
         break;
       }
     } else {
       // CheckRun: check conclusion after completion
-      const conclusion = (asAny.conclusion ?? "").toUpperCase();
-      const status = (asAny.status ?? "").toUpperCase();
+      const conclusion = (check.conclusion ?? "").toUpperCase();
+      const status = (check.status ?? "").toUpperCase();
       const done = status === "COMPLETED" || (!status && conclusion);
       if (!done || !passingConclusions.has(conclusion)) {
         checksGreen = false;

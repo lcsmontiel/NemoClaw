@@ -10,34 +10,11 @@
  * Usage: node --experimental-strip-types --no-warnings .agents/skills/nemoclaw-maintainer-day/scripts/check-gates.ts <pr-number> [--repo OWNER/REPO]
  */
 
-import { isRiskyFile, isTestFile, run, ghJson, parseStringArg } from "./shared.ts";
-
-// ---------------------------------------------------------------------------
-// Required CI checks
-// ---------------------------------------------------------------------------
-
-// Checks triggered by `pull_request` events. First-time fork contributors
-// need a maintainer to click "Approve and run" before these execute.
-// If any are missing from statusCheckRollup, CI cannot be considered green.
-const REQUIRED_CHECK_NAMES: string[] = [
-  "checks",       // pr.yaml — lint, typecheck, test
-  "commit-lint",  // commit-lint.yaml
-  "dco-check",    // dco-check.yaml
-];
+import { isRiskyFile, isTestFile, run, ghJson, parseStringArg, REQUIRED_CHECK_NAMES, type StatusCheck } from "./shared.ts";
 
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
-
-/** Union of CheckRun and StatusContext fields from GitHub's statusCheckRollup. */
-interface StatusCheck {
-  __typename?: string;
-  name?: string;       // CheckRun field
-  context?: string;    // StatusContext field
-  status?: string;     // CheckRun: COMPLETED, IN_PROGRESS, QUEUED, etc.
-  conclusion?: string; // CheckRun: SUCCESS, FAILURE, NEUTRAL, SKIPPED, etc.
-  state?: string;      // StatusContext: SUCCESS, FAILURE, PENDING, ERROR
-}
 
 interface GateResult {
   pass: boolean;
