@@ -282,6 +282,9 @@ As a result, commands that try to rewrite the baked config from inside the sandb
 If your Discord channel config is wrong, rerun onboarding so NemoClaw rebuilds the sandbox image with the correct messaging selection.
 Do not treat a failed `doctor --fix` run as proof that the Discord gateway path itself is broken.
 
+If `openclaw doctor` reports that it moved Telegram single-account values under `channels.telegram.accounts.default`, rerun onboarding and rebuild the sandbox rather than trying to patch `openclaw.json` in place.
+Current NemoClaw rebuilds bake Telegram in the account-based layout and set Telegram group chats to `groupPolicy: open`, which avoids the empty `groupAllowFrom` warning path for default group-chat access.
+
 ### Discord bot logs in, but the channel still does not work
 
 Separate the problem into two parts:

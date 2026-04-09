@@ -424,6 +424,23 @@ print(','.join(str(i) for i in ids))
   else
     skip "M11c: Telegram allowFrom not set (channel may not be configured)"
   fi
+
+  # M11d: Telegram groupPolicy defaults to open so group chats are not silently dropped
+  tg_group_policy=$(echo "$channel_json" | python3 -c "
+import json, sys
+d = json.load(sys.stdin)
+accounts = d.get('telegram', {}).get('accounts', {})
+account = accounts.get('default') or accounts.get('main') or {}
+print(account.get('groupPolicy', ''))
+" 2>/dev/null || true)
+
+  if [ "$tg_group_policy" = "open" ]; then
+    pass "M11d: Telegram groupPolicy is 'open'"
+  elif [ -n "$tg_group_policy" ]; then
+    fail "M11d: Telegram groupPolicy is '$tg_group_policy' (expected 'open')"
+  else
+    skip "M11d: Telegram groupPolicy not set (channel may not be configured)"
+  fi
 fi
 
 # ══════════════════════════════════════════════════════════════════
