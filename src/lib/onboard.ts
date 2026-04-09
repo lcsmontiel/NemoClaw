@@ -1557,6 +1557,16 @@ function getResumeConfigConflicts(session, opts = {}) {
     });
   }
 
+  const requestedAgent = opts.agent || process.env.NEMOCLAW_AGENT || null;
+  const recordedAgent = session?.agent || null;
+  if (requestedAgent && recordedAgent && requestedAgent !== recordedAgent) {
+    conflicts.push({
+      field: "agent",
+      requested: requestedAgent,
+      recorded: recordedAgent,
+    });
+  }
+
   return conflicts;
 }
 
@@ -2413,10 +2423,15 @@ async function createSandbox(
 
   // Create sandbox (use -- echo to avoid dropping into interactive shell)
   // Pass the base policy so sandbox starts in proxy mode (required for policy updates later)
-  const defaultPolicyPath = dangerouslySkipPermissions
-    ? path.join(ROOT, "nemoclaw-blueprint", "policies", "openclaw-sandbox-permissive.yaml")
-    : path.join(ROOT, "nemoclaw-blueprint", "policies", "openclaw-sandbox.yaml");
-  const basePolicyPath = (agent && agentOnboard.getAgentPolicyPath(agent)) || defaultPolicyPath;
+  let basePolicyPath;
+  if (dangerouslySkipPermissions) {
+    // Permissive mode always wins — even for agent sandboxes.
+    // The permissive policy is a superset covering all agents' needs.
+    basePolicyPath = path.join(ROOT, "nemoclaw-blueprint", "policies", "openclaw-sandbox-permissive.yaml");
+  } else {
+    const defaultPolicyPath = path.join(ROOT, "nemoclaw-blueprint", "policies", "openclaw-sandbox.yaml");
+    basePolicyPath = (agent && agentOnboard.getAgentPolicyPath(agent)) || defaultPolicyPath;
+  }
   const createArgs = [
     "--from",
     `${buildCtx}/Dockerfile`,
@@ -4233,12 +4248,17 @@ async function onboard(opts = {}) {
       const resumeConflicts = getResumeConfigConflicts(session, {
         nonInteractive: isNonInteractive(),
         fromDockerfile: requestedFromDockerfile,
+        agent: opts.agent || null,
       });
       if (resumeConflicts.length > 0) {
         for (const conflict of resumeConflicts) {
           if (conflict.field === "sandbox") {
             console.error(
               `  Resumable state belongs to sandbox '${conflict.recorded}', not '${conflict.requested}'.`,
+            );
+          } else if (conflict.field === "agent") {
+            console.error(
+              `  Session was started with agent '${conflict.recorded}', not '${conflict.requested}'.`,
             );
           } else if (conflict.field === "fromDockerfile") {
             if (!conflict.recorded) {

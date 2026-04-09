@@ -830,6 +830,36 @@ describe("onboard helpers", () => {
     }
   });
 
+  it("detects resume conflicts when a different agent is requested", () => {
+    expect(
+      getResumeConfigConflicts(
+        {
+          sandboxName: "my-assistant",
+          agent: "openclaw",
+        },
+        { agent: "hermes" },
+      ),
+    ).toEqual([
+      {
+        field: "agent",
+        requested: "hermes",
+        recorded: "openclaw",
+      },
+    ]);
+  });
+
+  it("allows resume when requested agent matches recorded agent", () => {
+    expect(
+      getResumeConfigConflicts(
+        {
+          sandboxName: "my-assistant",
+          agent: "hermes",
+        },
+        { agent: "hermes" },
+      ),
+    ).toEqual([]);
+  });
+
   it("returns a future-shell PATH hint for user-local openshell installs", () => {
     expect(getFutureShellPathHint("/home/test/.local/bin", "/usr/local/bin:/usr/bin")).toBe(
       'export PATH="/home/test/.local/bin:$PATH"',
