@@ -11,7 +11,7 @@ const path = require("path");
 const { spawnSync } = require("child_process");
 
 const { ROOT, run, shellQuote } = require("./runner");
-const { getAgentChoices, loadAgent, resolveAgentName } = require("./agent-defs");
+const { loadAgent, resolveAgentName } = require("./agent-defs");
 const { getProviderSelectionConfig } = require("./inference-config");
 const onboardSession = require("./onboard-session");
 
@@ -27,74 +27,6 @@ function resolveAgent({ agentFlag = null, session = null } = {}) {
   const name = resolveAgentName({ agentFlag, session });
   if (name === "openclaw") return null;
   return loadAgent(name);
-}
-
-/**
- * Returns true when there are multiple agents available and no explicit
- * agent was requested via flag or env var — meaning we should prompt.
- */
-function shouldPromptAgentSelection({ agentFlag = null } = {}) {
-  if (agentFlag || process.env.NEMOCLAW_AGENT) return false;
-  return getAgentChoices().length > 1;
-}
-
-// ── Agent selection step ────────────────────────────────────────
-
-/**
- * Run the interactive agent selection step.
- * Called when the user has not explicitly chosen an agent but multiple are
- * available. Returns the selected agent object, or null if openclaw was picked.
- *
- * @param {object} ctx — onboard.js context
- * @param {function} ctx.promptOrDefault
- * @param {boolean} ctx.isNonInteractive
- * @param {string} ctx.DIM
- * @param {string} ctx.RESET
- * @param {function} ctx.note
- * @returns {Promise<object|null>}
- */
-async function runAgentSelectionStep(ctx) {
-  const { promptOrDefault, isNonInteractive, DIM, RESET, note } = ctx;
-
-  let selectedName = "openclaw";
-  const choices = getAgentChoices();
-
-  if (choices.length > 1 && !isNonInteractive) {
-    console.log("");
-    console.log("  Which agent would you like to run in the sandbox?");
-    console.log("");
-    choices.forEach((c, i) => {
-      const marker = i === 0 ? " (default)" : "";
-      console.log(`    ${i + 1}) ${c.displayName}${marker}`);
-      console.log(`       ${DIM}${c.description}${RESET}`);
-    });
-    console.log("");
-    const answer = await promptOrDefault(
-      `  Select agent [1-${choices.length}]: `,
-      "NEMOCLAW_AGENT",
-      "1",
-    );
-    const idx = parseInt(answer, 10);
-    if (idx >= 1 && idx <= choices.length) {
-      selectedName = choices[idx - 1].name;
-    } else if (choices.find((c) => c.name === answer)) {
-      selectedName = answer;
-    }
-  } else if (isNonInteractive) {
-    note(`  [non-interactive] Agent: ${selectedName}`);
-  }
-
-  // Persist choice to session
-  onboardSession.updateSession((current) => {
-    current.agent = selectedName;
-    return current;
-  });
-  onboardSession.markStepComplete("agent_selection");
-
-  if (selectedName === "openclaw") return null;
-  const agent = loadAgent(selectedName);
-  console.log(`  Agent: ${agent.displayName}`);
-  return agent;
 }
 
 // ── Agent sandbox creation ──────────────────────────────────────
@@ -287,8 +219,6 @@ function printDashboardUi(sandboxName, token, agent, deps) {
 
 module.exports = {
   resolveAgent,
-  shouldPromptAgentSelection,
-  runAgentSelectionStep,
   createAgentSandbox,
   getAgentPolicyPath,
   handleAgentSetup,

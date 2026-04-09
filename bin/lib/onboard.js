@@ -4289,16 +4289,8 @@ async function onboard(opts = {}) {
     console.log("  ===================");
 
     // Agent resolution: returns null for openclaw (default path), agent object otherwise.
-    let agent = agentOnboard.resolveAgent({ agentFlag: opts.agent, session });
-    if (!agent && agentOnboard.shouldPromptAgentSelection({ agentFlag: opts.agent })) {
-      agent = await agentOnboard.runAgentSelectionStep({
-        promptOrDefault,
-        isNonInteractive: isNonInteractive(),
-        DIM,
-        RESET,
-        note,
-      });
-    }
+    // Non-default agents are selected via --agent flag or NEMOCLAW_AGENT env var.
+    const agent = agentOnboard.resolveAgent({ agentFlag: opts.agent, session });
     if (agent) {
       onboardSession.updateSession((s) => {
         s.agent = agent.name;
