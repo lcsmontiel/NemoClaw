@@ -164,7 +164,7 @@ export async function handleAgentSetup(
     let healthy = false;
     for (let i = 0; i < 15; i++) {
       const result = runCaptureOpenshell(
-        ["sandbox", "exec", sandboxName, "curl", "-sf", probe.url],
+        ["sandbox", "exec", sandboxName, "curl", "-sf", "--max-time", "3", probe.url],
         { ignoreError: true },
       );
       if (result && result.includes("ok")) {
@@ -173,13 +173,13 @@ export async function handleAgentSetup(
       }
       sleep(2);
     }
-    if (healthy) {
-      console.log(`  \u2713 ${agent.displayName} gateway is healthy`);
-    } else {
-      console.log(
-        `  \u26a0 ${agent.displayName} gateway health check timed out (may still be starting)`,
+    if (!healthy) {
+      throw new Error(
+        `${agent.displayName} gateway health check timed out after 15 attempts. ` +
+          `Check logs with: nemoclaw ${sandboxName} logs`,
       );
     }
+    console.log(`  \u2713 ${agent.displayName} gateway is healthy`);
   } else {
     console.log(`  \u2713 ${agent.displayName} configured inside sandbox`);
   }
