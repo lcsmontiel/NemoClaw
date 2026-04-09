@@ -4257,6 +4257,12 @@ async function onboard(opts = {}) {
         note,
       });
     }
+    if (agent) {
+      onboardSession.updateSession((s) => {
+        s.agent = agent.name;
+        return s;
+      });
+    }
 
     let gpu;
     const resumePreflight = resume && session?.steps?.preflight?.status === "complete";
