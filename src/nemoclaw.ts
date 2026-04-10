@@ -1279,11 +1279,14 @@ async function sandboxAddAgent(sandboxName, args = []) {
     agentType = args[agentIdx + 1];
   }
 
-  await addAgent({
+  const result = await addAgent({
     sandboxName,
     agentType,
     args,
   });
+  if (!result) {
+    process.exit(1);
+  }
 }
 
 async function sandboxDestroy(sandboxName, args = []) {

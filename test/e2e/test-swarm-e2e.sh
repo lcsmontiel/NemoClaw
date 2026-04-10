@@ -224,10 +224,13 @@ fi
 
 section "Phase 5: Add second agent (same type)"
 
-if nemoclaw "$SANDBOX_NAME" add-agent 2>&1; then
+ADD_OUTPUT=$(nemoclaw "$SANDBOX_NAME" add-agent 2>&1)
+ADD_EXIT=$?
+info "add-agent output: $ADD_OUTPUT"
+if [ $ADD_EXIT -eq 0 ] && echo "$ADD_OUTPUT" | grep -qi "Added"; then
   pass "add-agent succeeded"
 else
-  fail "add-agent failed"
+  fail "add-agent failed (exit=$ADD_EXIT): $(echo "$ADD_OUTPUT" | head -3)"
 fi
 
 # ── Phase 6: Registry validation ─────────────────────────────────

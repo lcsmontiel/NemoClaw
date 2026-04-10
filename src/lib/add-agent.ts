@@ -93,8 +93,8 @@ export async function addAgent(opts: AddAgentOptions): Promise<AgentInstance | n
 
   // ── Step 3: Verify binary in sandbox ───────────────────────────
   const binaryPath = agentDef.binary_path || `/usr/local/bin/${agentType}`;
-  const whichResult = sandboxExecCapture(sandboxName, `which ${binaryPath} 2>/dev/null`);
-  if (!whichResult || !whichResult.trim()) {
+  const binaryCheck = sandboxExecCapture(sandboxName, `test -x ${binaryPath} && echo found`);
+  if (!binaryCheck || !binaryCheck.includes("found")) {
     console.error(`\n  ${agentDef.displayName} binary not found in sandbox '${sandboxName}'.`);
     console.error(`  The sandbox image does not contain '${binaryPath}'.`);
     console.error(`  To use ${agentDef.displayName}, rebuild with a multi-agent image.`);
