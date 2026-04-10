@@ -212,6 +212,7 @@ print_dashboard_urls() {
   local_url="http://127.0.0.1:${PUBLIC_PORT}/v1"
   echo "[gateway] Hermes API: ${local_url}" >&2
   echo "[gateway] Health:     ${local_url%/v1}/health" >&2
+  echo "[gateway] Connect any OpenAI-compatible frontend to this endpoint." >&2
 }
 
 # ── socat forwarder ──────────────────────────────────────────────
