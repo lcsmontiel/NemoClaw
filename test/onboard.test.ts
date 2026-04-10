@@ -1775,7 +1775,7 @@ const { setupInference } = require(${onboardPath});
 
     assert.match(
       source,
-      /startRecordedStep\("sandbox", \{ sandboxName, provider, model \}\);\s*selectedMessagingChannels = await setupMessagingChannels\(\);\s*onboardSession\.updateSession\(\(current\) => \{\s*current\.messagingChannels = selectedMessagingChannels;\s*return current;\s*\}\);\s*sandboxName = await createSandbox\(\s*gpu,\s*model,\s*provider,\s*preferredInferenceApi,\s*sandboxName,\s*webSearchConfig,\s*selectedMessagingChannels,\s*fromDockerfile,\s*agent,\s*dangerouslySkipPermissions,\s*\);/,
+      /startRecordedStep\("sandbox", \{\s*sandboxName: state\.sandboxName,\s*provider: state\.provider,\s*model: state\.model,\s*\}\);\s*selectedMessagingChannels = await setupMessagingChannels\(\);\s*onboardSession\.updateSession\(\(current\) => \{\s*current\.messagingChannels = selectedMessagingChannels;\s*return current;\s*\}\);\s*const sandboxName = await createSandbox\(/,
     );
   });
 
@@ -1795,7 +1795,7 @@ const { setupInference } = require(${onboardPath});
       /function skippedStepMessage\(stepName, detail, reason = "resume"\)/,
     );
     assert.match(sharedSource, /step\(stepInfo\.number, 8, stepInfo\.title\);/);
-    assert.match(flowSource, /skippedStepMessage\("openclaw", sandboxName\)/);
+    assert.match(flowSource, /skippedStepMessage\("openclaw", state\.sandboxName\)/);
     assert.match(
       flowSource,
       /skippedStepMessage\("policies", \(recordedPolicyPresets \|\| \[\]\)\.join\(", "\)\)/,
