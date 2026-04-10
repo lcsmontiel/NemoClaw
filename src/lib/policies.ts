@@ -392,6 +392,63 @@ function applyPermissivePolicy(sandboxName) {
   }
 }
 
+/**
+ * Merge an agent type's policy-additions.yaml into a running sandbox.
+ * Idempotent — safe to call multiple times for the same agent type.
+ *
+ * @param {string} sandboxName - Target sandbox
+ * @param {object} agentDef - Agent definition from loadAgent()
+ * @returns {boolean} True if policy was applied (or already present)
+ */
+function mergeAgentPolicyAdditions(sandboxName, agentDef) {
+  const policyPath = agentDef.policyAdditionsPath;
+  if (!policyPath || !fs.existsSync(policyPath)) {
+    return true; // No agent-specific policies — nothing to merge
+  }
+
+  const agentPolicyContent = fs.readFileSync(policyPath, "utf-8");
+  const agentEntries = extractPresetEntries(agentPolicyContent);
+  if (!agentEntries) {
+    return true; // No network_policies section
+  }
+
+  // Fetch current sandbox policy
+  let rawPolicy = "";
+  try {
+    rawPolicy = runCapture(buildPolicyGetCommand(sandboxName), { ignoreError: true });
+  } catch {
+    /* ignored */
+  }
+  const currentPolicy = parseCurrentPolicy(rawPolicy);
+  const merged = mergePresetIntoPolicy(currentPolicy, agentEntries);
+
+  const endpoints = getPresetEndpoints(agentPolicyContent);
+  if (endpoints.length > 0) {
+    console.log(`  Merging ${agentDef.displayName || agentDef.name} policy additions: ${endpoints.join(", ")}`);
+  }
+
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-agent-policy-"));
+  const tmpFile = path.join(tmpDir, "policy.yaml");
+  fs.writeFileSync(tmpFile, merged, { encoding: "utf-8", mode: 0o600 });
+
+  try {
+    run(buildPolicySetCommand(tmpFile, sandboxName));
+  } finally {
+    try {
+      fs.unlinkSync(tmpFile);
+    } catch {
+      /* ignored */
+    }
+    try {
+      fs.rmdirSync(tmpDir);
+    } catch {
+      /* ignored */
+    }
+  }
+
+  return true;
+}
+
 export {
   PRESETS_DIR,
   PERMISSIVE_POLICY_PATH,
@@ -407,4 +464,5 @@ export {
   applyPermissivePolicy,
   getAppliedPresets,
   selectFromList,
+  mergeAgentPolicyAdditions,
 };

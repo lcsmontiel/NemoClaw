@@ -1269,6 +1269,23 @@ function cleanupSandboxServices(sandboxName) {
   }
 }
 
+async function sandboxAddAgent(sandboxName, args = []) {
+  const { addAgent } = require("./lib/add-agent");
+
+  // Parse --agent flag
+  let agentType;
+  const agentIdx = args.indexOf("--agent");
+  if (agentIdx !== -1 && args[agentIdx + 1]) {
+    agentType = args[agentIdx + 1];
+  }
+
+  await addAgent({
+    sandboxName,
+    agentType,
+    args,
+  });
+}
+
 async function sandboxDestroy(sandboxName, args = []) {
   const skipConfirm = args.includes("--yes") || args.includes("--force");
   if (!skipConfirm) {
@@ -1468,9 +1485,12 @@ const [cmd, ...args] = process.argv.slice(2);
       case "destroy":
         await sandboxDestroy(cmd, actionArgs);
         break;
+      case "add-agent":
+        await sandboxAddAgent(cmd, actionArgs);
+        break;
       default:
         console.error(`  Unknown action: ${action}`);
-        console.error(`  Valid actions: connect, status, logs, policy-add, policy-list, destroy`);
+        console.error(`  Valid actions: connect, status, logs, policy-add, policy-list, add-agent, destroy`);
         process.exit(1);
     }
     return;

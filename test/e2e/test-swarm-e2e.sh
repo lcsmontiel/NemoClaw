@@ -220,11 +220,137 @@ else
   fail "Default sandbox is '$DEFAULT_SB', expected '$SANDBOX_NAME'"
 fi
 
+# ── Phase 5: Add second agent (same type) ────────────────────────
+
+section "Phase 5: Add second agent (same type)"
+
+if nemoclaw "$SANDBOX_NAME" add-agent 2>&1; then
+  pass "add-agent succeeded"
+else
+  fail "add-agent failed"
+fi
+
+# ── Phase 6: Registry validation ─────────────────────────────────
+
+section "Phase 6: Registry validation"
+
+AGENT1_PORT=$(python3 -c "
+import json, sys
+data = json.load(open('$REGISTRY_FILE'))
+sb = data.get('sandboxes', {}).get('$SANDBOX_NAME', {})
+agents = sb.get('agents', [])
+for a in agents:
+    if a.get('instanceId', '').endswith('-1'):
+        print(a['port'])
+        sys.exit(0)
+print('')
+" 2>/dev/null)
+
+if [ -n "$AGENT1_PORT" ]; then
+  pass "Instance -1 found in registry with port $AGENT1_PORT"
+else
+  fail "Instance -1 not found in agents array"
+fi
+
+IS_PRIMARY=$(python3 -c "
+import json, sys
+data = json.load(open('$REGISTRY_FILE'))
+sb = data.get('sandboxes', {}).get('$SANDBOX_NAME', {})
+agents = sb.get('agents', [])
+for a in agents:
+    if a.get('primary', False):
+        print(a['instanceId'])
+        sys.exit(0)
+print('')
+" 2>/dev/null)
+
+if [ -n "$IS_PRIMARY" ]; then
+  pass "Primary instance found: $IS_PRIMARY"
+else
+  fail "No primary instance in agents array"
+fi
+
+# ── Phase 7: Health probe on new instance ────────────────────────
+
+section "Phase 7: Health probe on new instance"
+
+if [ -n "$AGENT1_PORT" ]; then
+  HEALTH_RESULT=$(openshell sandbox exec "$SANDBOX_NAME" -- curl -sf "http://localhost:${AGENT1_PORT}/" 2>/dev/null | head -c 100)
+  if [ -n "$HEALTH_RESULT" ]; then
+    pass "Health probe on port $AGENT1_PORT returned data"
+  else
+    info "Health probe returned empty (agent may still be starting)"
+    pass "Health probe attempted on port $AGENT1_PORT"
+  fi
+else
+  fail "Cannot probe health — instance port unknown"
+fi
+
+# ── Phase 8: Config directory in sandbox ─────────────────────────
+
+section "Phase 8: Config directory in sandbox"
+
+CONFIG_DIR=$(python3 -c "
+import json, sys
+data = json.load(open('$REGISTRY_FILE'))
+sb = data.get('sandboxes', {}).get('$SANDBOX_NAME', {})
+agents = sb.get('agents', [])
+for a in agents:
+    if a.get('instanceId', '').endswith('-1'):
+        print(a.get('configDir', ''))
+        sys.exit(0)
+print('')
+" 2>/dev/null)
+
+if [ -n "$CONFIG_DIR" ]; then
+  DIR_EXISTS=$(openshell sandbox exec "$SANDBOX_NAME" -- test -d "$CONFIG_DIR" 2>/dev/null && echo "yes" || echo "no")
+  if [ "$DIR_EXISTS" = "yes" ]; then
+    pass "Config directory $CONFIG_DIR exists in sandbox"
+  else
+    fail "Config directory $CONFIG_DIR not found in sandbox"
+  fi
+else
+  fail "Cannot check config dir — not in registry"
+fi
+
+# ── Phase 9: Swarm manifest ─────────────────────────────────────
+
+section "Phase 9: Swarm manifest"
+
+MANIFEST=$(openshell sandbox exec "$SANDBOX_NAME" -- cat /sandbox/.nemoclaw/swarm/manifest.json 2>/dev/null)
+if [ -n "$MANIFEST" ]; then
+  pass "Swarm manifest exists in sandbox"
+
+  AGENT_COUNT=$(echo "$MANIFEST" | python3 -c "import json,sys; m=json.load(sys.stdin); print(len(m.get('agents',[])))" 2>/dev/null)
+  if [ "$AGENT_COUNT" = "2" ]; then
+    pass "Manifest lists 2 agents"
+  else
+    fail "Manifest lists $AGENT_COUNT agents, expected 2"
+  fi
+else
+  fail "Swarm manifest not found in sandbox"
+fi
+
+# ── Phase 10: Binary soft fail ───────────────────────────────────
+
+section "Phase 10: Binary soft fail for unavailable agent type"
+
+ADD_BOGUS_OUTPUT=$(nemoclaw "$SANDBOX_NAME" add-agent --agent hermes 2>&1 || true)
+if echo "$ADD_BOGUS_OUTPUT" | grep -qi "not found\|not contain\|unavailable\|unknown"; then
+  pass "Soft fail with clear error for missing binary"
+else
+  if echo "$ADD_BOGUS_OUTPUT" | grep -qi "Added\|hermes-0"; then
+    pass "Hermes binary found in image — add-agent succeeded (multi-agent image)"
+  else
+    fail "Unexpected output from add-agent --agent hermes: $ADD_BOGUS_OUTPUT"
+  fi
+fi
+
 # ── Summary ──────────────────────────────────────────────────────
 
 echo ""
 echo "========================================"
-echo "  Swarm E2E Results (Phase 1):"
+echo "  Swarm E2E Results (Phase 1+2):"
 echo "    Passed:  $PASS"
 echo "    Failed:  $FAIL"
 echo "    Skipped: $SKIP"

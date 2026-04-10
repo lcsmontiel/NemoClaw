@@ -14,6 +14,9 @@ export interface AgentInstance {
   dataDir: string;
   addedAt: string;
   primary: boolean;
+  forwardPort?: number;
+  messagingProviders?: string[];
+  messagingChannels?: string[];
 }
 
 export interface SandboxEntry {
