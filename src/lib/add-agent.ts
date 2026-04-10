@@ -92,16 +92,21 @@ export async function addAgent(opts: AddAgentOptions): Promise<AgentInstance | n
   const agentDef = loadAgent(agentType);
 
   // ── Step 3: Verify binary in sandbox ───────────────────────────
-  // Use `command -v` (not `test -x /full/path`) because the binary may be
-  // installed via npm/pip in a non-standard prefix — the start scripts use
-  // `command -v openclaw` for the same reason.
-  const binaryName = agentType;
-  const binaryCheck = sandboxExecCapture(sandboxName, `command -v ${binaryName} && echo found`);
-  if (!binaryCheck || !binaryCheck.includes("found")) {
-    console.error(`\n  ${agentDef.displayName} binary not found in sandbox '${sandboxName}'.`);
-    console.error(`  The sandbox image does not contain '${binaryName}' on PATH.`);
-    console.error(`  To use ${agentDef.displayName}, rebuild with a multi-agent image.`);
-    return null;
+  // If adding the same agent type that the sandbox was onboarded with, skip
+  // the check — the binary is already running the gateway. The exec PATH
+  // inside the sandbox may not match the entrypoint PATH (npm global prefix,
+  // nvm shims, etc.), so probing from outside is unreliable for the primary
+  // agent type. Only check for a DIFFERENT agent type.
+  const primaryAgentType = sandbox.agent || "openclaw";
+  if (agentType !== primaryAgentType) {
+    const binaryName = agentType;
+    const binaryCheck = sandboxExecCapture(sandboxName, `command -v ${binaryName} 2>/dev/null && echo found`);
+    if (!binaryCheck || !binaryCheck.includes("found")) {
+      console.error(`\n  ${agentDef.displayName} binary not found in sandbox '${sandboxName}'.`);
+      console.error(`  The sandbox image does not contain '${binaryName}' on PATH.`);
+      console.error(`  To use ${agentDef.displayName}, rebuild with a multi-agent image.`);
+      return null;
+    }
   }
 
   // ── Step 4: Allocate port and compute instance ID ──────────────
