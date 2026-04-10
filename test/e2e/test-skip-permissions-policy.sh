@@ -195,12 +195,16 @@ policy_list=$(openshell policy list "$SANDBOX_NAME" 2>&1) || true
 info "Policy list output:"
 echo "$policy_list" | while IFS= read -r line; do info "  $line"; done
 
-# The latest policy version must not be Pending
-if echo "$policy_list" | grep -qi "Pending"; then
-  fail "Policy is stuck in Pending — the bug is NOT fixed"
+# The latest (highest) policy version must not be Pending.
+# Policy list is sorted descending — first data row is the effective version.
+latest_status=$(echo "$policy_list" | grep -E '^\s*[0-9]' | head -1 | awk '{print $3}')
+if [ "$latest_status" = "Pending" ]; then
+  fail "Latest policy version is Pending — the bug is NOT fixed"
   info "This is the exact symptom from the bug report: policy never activates"
+elif [ "$latest_status" = "Loaded" ]; then
+  pass "Latest policy version is Loaded (active)"
 else
-  pass "No Pending policies found"
+  pass "Latest policy version status: $latest_status (not Pending)"
 fi
 
 # 3b: openshell policy get --full — must contain network_policies with access: full
