@@ -1756,7 +1756,7 @@ const { setupInference } = require(${onboardPath});
 
   it("suppresses expected provider-create AlreadyExists noise when update succeeds", () => {
     const source = fs.readFileSync(
-      path.join(import.meta.dirname, "..", "src", "lib", "onboard.ts"),
+      path.join(import.meta.dirname, "..", "src", "lib", "onboard-provider.ts"),
       "utf-8",
     );
 
