@@ -89,35 +89,30 @@ function hasBrevInstance(instanceName) {
   return listBrevInstances().some((instance) => instance.name === instanceName);
 }
 
-function deleteBrevInstance(instanceName, { attempts = 5, intervalSeconds = 5 } = {}) {
-  for (let attempt = 1; attempt <= attempts; attempt += 1) {
-    if (!hasBrevInstance(instanceName)) {
-      return true;
-    }
+function isBrevInstanceDeleting(instanceName) {
+  const instances = listBrevInstances();
+  const instance = instances.find((i) => i.name === instanceName);
+  return instance && (instance.status === "DELETING" || instance.status === "STOPPING");
+}
 
-    try {
-      brev("delete", instanceName);
-    } catch {
-      // Best-effort delete. We'll verify via ls below and retry if needed.
-    }
-    sleep(2);
-
-    try {
-      brev("refresh");
-    } catch {
-      // Ignore transient refresh failures and rely on the next existence check.
-    }
-
-    if (!hasBrevInstance(instanceName)) {
-      return true;
-    }
-
-    if (attempt < attempts) {
-      sleep(intervalSeconds);
-    }
+function deleteBrevInstance(instanceName) {
+  if (!hasBrevInstance(instanceName)) {
+    return true;
   }
 
-  return !hasBrevInstance(instanceName);
+  try {
+    brev("delete", instanceName);
+  } catch {
+    // Best-effort delete
+  }
+
+  // If the instance is gone or in DELETING/STOPPING state, that's success —
+  // Brev will finish the teardown asynchronously.
+  if (!hasBrevInstance(instanceName) || isBrevInstanceDeleting(instanceName)) {
+    return true;
+  }
+
+  return false;
 }
 
 function ssh(cmd, { timeout = 120_000, stream = false } = {}) {
@@ -658,7 +653,7 @@ describe.runIf(hasRequiredVars && hasAuthenticatedBrev)("Brev E2E", () => {
         `Delete it manually: brev delete ${INSTANCE_NAME}`,
       );
     }
-  });
+  }, 120_000); // 2 min for cleanup
 
   // NOTE: The full E2E test runs install.sh --non-interactive which destroys and
   // rebuilds the sandbox from scratch. It cannot run alongside the security tests
