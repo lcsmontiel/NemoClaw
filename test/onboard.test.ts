@@ -5,6 +5,7 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
+import { createRequire } from "node:module";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
@@ -26,7 +27,6 @@ import {
   getRequestedModelHint,
   getRequestedProviderHint,
   getRequestedSandboxNameHint,
-  getSuggestedPolicyPresets,
   getResumeConfigConflicts,
   getResumeSandboxConflict,
   getSandboxStateFromOutputs,
@@ -47,6 +47,9 @@ import {
 } from "../bin/lib/onboard";
 import { stageOptimizedSandboxBuildContext } from "../bin/lib/sandbox-build-context";
 import { buildWebSearchDockerConfig } from "../dist/lib/web-search";
+
+const require = createRequire(import.meta.url);
+const { getSuggestedPolicyPresets } = require("../src/lib/onboard.ts");
 
 describe("onboard helpers", () => {
   it("classifies sandbox create timeout failures and tracks upload progress", () => {
@@ -1766,7 +1769,7 @@ const { setupInference } = require(${onboardPath});
 
     assert.match(
       source,
-      /startRecordedStep\("sandbox", \{ sandboxName, provider, model \}\);\s*sandboxName = await createSandbox\(\s*gpu,\s*model,\s*provider,\s*preferredInferenceApi,\s*sandboxName,\s*webSearchConfig,\s*enabledChannels,\s*fromDockerfile,\s*agent,\s*dangerouslySkipPermissions,\s*\);/,
+      /startRecordedStep\("sandbox", \{ sandboxName, provider, model \}\);\s*selectedMessagingChannels = await setupMessagingChannels\(\);\s*onboardSession\.updateSession\(\(current\) => \{\s*current\.messagingChannels = selectedMessagingChannels;\s*return current;\s*\}\);\s*sandboxName = await createSandbox\(\s*gpu,\s*model,\s*provider,\s*preferredInferenceApi,\s*sandboxName,\s*webSearchConfig,\s*selectedMessagingChannels,\s*fromDockerfile,\s*agent,\s*dangerouslySkipPermissions,\s*\);/,
     );
   });
 

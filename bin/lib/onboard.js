@@ -1,10 +1,6 @@
 // @ts-nocheck
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
-//
-// Thin re-export shim — the implementation lives in src/lib/onboard.ts,
-// compiled to dist/lib/onboard.js.
-
 const mod = require("../../dist/lib/onboard");
 module.exports = {
   buildProviderArgs: mod.buildProviderArgs,
@@ -54,7 +50,6 @@ module.exports = {
   isInferenceRouteReady: mod.isInferenceRouteReady,
   isOpenclawReady: mod.isOpenclawReady,
   arePolicyPresetsApplied: mod.arePolicyPresetsApplied,
-  getSuggestedPolicyPresets: mod.getSuggestedPolicyPresets,
   presetsCheckboxSelector: mod.presetsCheckboxSelector,
   setupPoliciesWithSelection: mod.setupPoliciesWithSelection,
   summarizeCurlFailure: mod.summarizeCurlFailure,
