@@ -7,9 +7,11 @@
  * Supports subcommands:
  *   /nemoclaw status   - show sandbox/blueprint/inference state
  *   /nemoclaw eject    - rollback to host installation
+ *   /nemoclaw memory   - show memory stats or delegate to subcommands
  *   /nemoclaw          - show help
  */
 
+import { existsSync, readFileSync } from "node:fs";
 import type { PluginCommandContext, PluginCommandResult, OpenClawPluginApi } from "../index.js";
 import { loadState } from "../blueprint/state.js";
 import {
@@ -17,13 +19,21 @@ import {
   describeOnboardProvider,
   loadOnboardConfig,
 } from "../onboard/config.js";
-import { getMemoryStats, INDEX_SOFT_CAP, TOPIC_SOFT_CAP, MEMORY_TYPES } from "../memory/index.js";
+import {
+  INDEX_SOFT_CAP,
+  TOPIC_SOFT_CAP,
+  MEMORY_TYPES,
+  MEMORY_INDEX_PATH,
+} from "../memory/index.js";
+import { isValidMemoryType, type MemoryType } from "../memory/index.js";
+import { TypedMemoryProvider } from "../memory/typed-provider.js";
 
 export function handleSlashCommand(
   ctx: PluginCommandContext,
   _api: OpenClawPluginApi,
 ): PluginCommandResult {
-  const subcommand = ctx.args?.trim().split(/\s+/)[0] ?? "";
+  const parts = ctx.args?.trim().split(/\s+/) ?? [];
+  const subcommand = parts[0] ?? "";
 
   switch (subcommand) {
     case "status":
@@ -33,7 +43,7 @@ export function handleSlashCommand(
     case "onboard":
       return slashOnboard();
     case "memory":
-      return slashMemory();
+      return slashMemoryRouter(parts.slice(1));
     default:
       return slashHelp();
   }
@@ -121,8 +131,26 @@ function slashOnboard(): PluginCommandResult {
   };
 }
 
-function slashMemory(): PluginCommandResult {
-  const stats = getMemoryStats();
+function slashMemoryRouter(args: string[]): PluginCommandResult {
+  const sub = args[0] ?? "";
+  const provider = new TypedMemoryProvider();
+
+  switch (sub) {
+    case "read":
+      return slashMemoryRead(provider, args.slice(1).join(" ").trim());
+    case "search":
+      return slashMemorySearch(provider, args.slice(1).join(" ").trim());
+    case "list":
+      return slashMemoryList(provider, args);
+    case "migrate":
+      return slashMemoryMigrate(provider);
+    default:
+      return slashMemoryStats(provider);
+  }
+}
+
+function slashMemoryStats(provider: TypedMemoryProvider): PluginCommandResult {
+  const stats = provider.stats();
 
   const lines = [
     "**Memory Stats**",
@@ -143,6 +171,112 @@ function slashMemory(): PluginCommandResult {
   }
 
   return { text: lines.join("\n") };
+}
+
+function slashMemoryRead(provider: TypedMemoryProvider, slug: string): PluginCommandResult {
+  if (!slug) {
+    return { text: "Usage: `/nemoclaw memory read <slug>`" };
+  }
+
+  const topic = provider.load(slug);
+  if (!topic) {
+    return { text: `Memory topic \`${slug}\` not found.` };
+  }
+
+  const { frontmatter, body } = topic;
+  const lines = [
+    `**${frontmatter.name}**`,
+    "",
+    `Type: ${frontmatter.type}`,
+    `Description: ${frontmatter.description}`,
+    `Updated: ${frontmatter.updated}`,
+    "",
+    body.trim(),
+  ];
+
+  return { text: lines.join("\n") };
+}
+
+function slashMemorySearch(provider: TypedMemoryProvider, query: string): PluginCommandResult {
+  if (!query) {
+    return { text: "Usage: `/nemoclaw memory search <query>`" };
+  }
+
+  const results = provider.search(query);
+  if (results.length === 0) {
+    return { text: `No results found for query: \`${query}\`` };
+  }
+
+  const rows = results.map((e) => `| ${e.title} | ${e.slug} | ${e.type} | ${e.updatedAt} |`);
+
+  return {
+    text: [
+      `**Memory Search: ${query}**`,
+      "",
+      "| Title | Slug | Type | Updated |",
+      "|---|---|---|---|",
+      ...rows,
+    ].join("\n"),
+  };
+}
+
+function slashMemoryList(provider: TypedMemoryProvider, args: string[]): PluginCommandResult {
+  let filter: { type?: MemoryType } | undefined;
+
+  const typeIdx = args.indexOf("--type");
+  if (typeIdx !== -1) {
+    const typeVal = args[typeIdx + 1];
+    if (typeVal && isValidMemoryType(typeVal)) {
+      filter = { type: typeVal };
+    }
+  }
+
+  const entries = provider.list(filter);
+
+  if (entries.length === 0) {
+    const typeMsg = filter?.type ? ` of type \`${filter.type}\`` : "";
+    return { text: `No memory entries found${typeMsg}.` };
+  }
+
+  const rows = entries.map((e) => `| ${e.title} | ${e.slug} | ${e.type} | ${e.updatedAt} |`);
+
+  return {
+    text: [
+      "**Memory Index**",
+      "",
+      "| Title | Slug | Type | Updated |",
+      "|---|---|---|---|",
+      ...rows,
+    ].join("\n"),
+  };
+}
+
+function slashMemoryMigrate(provider: TypedMemoryProvider): PluginCommandResult {
+  if (!existsSync(MEMORY_INDEX_PATH)) {
+    return { text: "Nothing to migrate: MEMORY.md does not exist." };
+  }
+
+  const content = readFileSync(MEMORY_INDEX_PATH, "utf-8");
+
+  if (!content.trim()) {
+    return { text: "Nothing to migrate: MEMORY.md is empty." };
+  }
+
+  if (content.includes("| Topic | Type | Updated |")) {
+    return {
+      text: "Memory index already exists (typed index detected). Migration skipped.",
+    };
+  }
+
+  const result = provider.migrate(content);
+  return {
+    text: [
+      "**Memory Migration Complete**",
+      "",
+      `Imported: ${String(result.imported)}`,
+      `Skipped: ${String(result.skipped)}`,
+    ].join("\n"),
+  };
 }
 
 function slashEject(): PluginCommandResult {

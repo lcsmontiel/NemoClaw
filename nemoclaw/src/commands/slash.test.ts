@@ -6,6 +6,21 @@ import type { PluginCommandContext, OpenClawPluginApi } from "../index.js";
 import type { NemoClawState } from "../blueprint/state.js";
 import type { NemoClawOnboardConfig } from "../onboard/config.js";
 
+// ---------------------------------------------------------------------------
+// Hoist mockProvider so vi.mock factories can reference it
+// ---------------------------------------------------------------------------
+
+const mockProvider = vi.hoisted(() => ({
+  load: vi.fn(),
+  search: vi.fn(),
+  list: vi.fn(),
+  migrate: vi.fn(),
+  stats: vi.fn(),
+  context: vi.fn(),
+  save: vi.fn(),
+  delete: vi.fn(),
+}));
+
 vi.mock("../blueprint/state.js", () => ({
   loadState: vi.fn(),
 }));
@@ -21,6 +36,23 @@ vi.mock("../memory/index.js", () => ({
   INDEX_SOFT_CAP: 200,
   TOPIC_SOFT_CAP: 500,
   MEMORY_TYPES: ["user", "project", "feedback", "reference"],
+  MEMORY_INDEX_PATH: "/sandbox/.openclaw/workspace/MEMORY.md",
+  isValidMemoryType: (v: string) => ["user", "project", "feedback", "reference"].includes(v),
+}));
+
+vi.mock("../memory/typed-provider.js", () => ({
+  TypedMemoryProvider: vi.fn(function () {
+    return mockProvider;
+  }),
+}));
+
+// ---------------------------------------------------------------------------
+// Mock node:fs for slashMemoryMigrate
+// ---------------------------------------------------------------------------
+
+vi.mock("node:fs", () => ({
+  existsSync: vi.fn(),
+  readFileSync: vi.fn(),
 }));
 
 import { handleSlashCommand } from "./slash.js";
@@ -32,12 +64,15 @@ import {
 } from "../onboard/config.js";
 import { getMemoryStats } from "../memory/index.js";
 import type { MemoryStats } from "../memory/index.js";
+import { existsSync, readFileSync } from "node:fs";
 
 const mockedLoadState = vi.mocked(loadState);
 const mockedLoadOnboardConfig = vi.mocked(loadOnboardConfig);
 const mockedDescribeOnboardEndpoint = vi.mocked(describeOnboardEndpoint);
 const mockedDescribeOnboardProvider = vi.mocked(describeOnboardProvider);
 const mockedGetMemoryStats = vi.mocked(getMemoryStats);
+const mockedExistsSync = vi.mocked(existsSync);
+const mockedReadFileSync = vi.mocked(readFileSync);
 
 function makeCtx(args?: string): PluginCommandContext {
   return {
@@ -76,19 +111,30 @@ function blankState(): NemoClawState {
   };
 }
 
+function blankStats(): MemoryStats {
+  return {
+    indexEntryCount: 0,
+    indexLineCount: 0,
+    indexOverCap: false,
+    topicCount: 0,
+    topicsByType: { user: 0, project: 0, feedback: 0, reference: 0 },
+    oversizedTopics: [],
+  };
+}
+
 describe("commands/slash", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockedLoadState.mockReturnValue(blankState());
     mockedLoadOnboardConfig.mockReturnValue(null);
-    mockedGetMemoryStats.mockReturnValue({
-      indexEntryCount: 0,
-      indexLineCount: 0,
-      indexOverCap: false,
-      topicCount: 0,
-      topicsByType: { user: 0, project: 0, feedback: 0, reference: 0 },
-      oversizedTopics: [],
-    } satisfies MemoryStats);
+    mockedGetMemoryStats.mockReturnValue(blankStats());
+    mockProvider.stats.mockReturnValue(blankStats());
+    mockProvider.load.mockReturnValue(null);
+    mockProvider.search.mockReturnValue([]);
+    mockProvider.list.mockReturnValue([]);
+    mockProvider.migrate.mockReturnValue({ imported: 0, skipped: 0 });
+    mockedExistsSync.mockReturnValue(false);
+    mockedReadFileSync.mockReturnValue("");
   });
 
   // -------------------------------------------------------------------------
@@ -264,7 +310,7 @@ describe("commands/slash", () => {
   });
 
   // -------------------------------------------------------------------------
-  // memory
+  // memory (stats — no subcommand)
   // -------------------------------------------------------------------------
 
   describe("memory", () => {
@@ -276,7 +322,7 @@ describe("commands/slash", () => {
     });
 
     it("returns stats with type breakdown", () => {
-      mockedGetMemoryStats.mockReturnValue({
+      mockProvider.stats.mockReturnValue({
         indexEntryCount: 5,
         indexLineCount: 12,
         indexOverCap: false,
@@ -291,7 +337,7 @@ describe("commands/slash", () => {
     });
 
     it("shows over-cap warning", () => {
-      mockedGetMemoryStats.mockReturnValue({
+      mockProvider.stats.mockReturnValue({
         indexEntryCount: 201,
         indexLineCount: 210,
         indexOverCap: true,
@@ -304,7 +350,7 @@ describe("commands/slash", () => {
     });
 
     it("lists oversized topics", () => {
-      mockedGetMemoryStats.mockReturnValue({
+      mockProvider.stats.mockReturnValue({
         indexEntryCount: 2,
         indexLineCount: 8,
         indexOverCap: false,
@@ -316,6 +362,136 @@ describe("commands/slash", () => {
       expect(result.text).toContain("Oversized topics");
       expect(result.text).toContain("big-topic");
       expect(result.text).toContain("huge-topic");
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // memory read
+  // -------------------------------------------------------------------------
+
+  describe("memory read", () => {
+    it("returns topic content when found", () => {
+      mockProvider.load.mockReturnValue({
+        frontmatter: {
+          name: "My Topic",
+          description: "A description",
+          type: "user",
+          created: "2026-03-01T00:00:00.000Z",
+          updated: "2026-03-01T00:00:00.000Z",
+        },
+        body: "This is the body content.",
+      });
+      const result = handleSlashCommand(makeCtx("memory read my-topic"), makeApi());
+      expect(result.text).toContain("My Topic");
+      expect(result.text).toContain("This is the body content.");
+    });
+
+    it("returns not found for missing slug", () => {
+      mockProvider.load.mockReturnValue(null);
+      const result = handleSlashCommand(makeCtx("memory read missing-slug"), makeApi());
+      expect(result.text).toContain("not found");
+    });
+
+    it("returns usage when no slug provided", () => {
+      const result = handleSlashCommand(makeCtx("memory read"), makeApi());
+      expect(result.text).toContain("Usage");
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // memory search
+  // -------------------------------------------------------------------------
+
+  describe("memory search", () => {
+    it("returns matching entries", () => {
+      mockProvider.search.mockReturnValue([
+        { slug: "topic-one", title: "Topic One", type: "user", updatedAt: "2026-03-01" },
+        { slug: "topic-two", title: "Topic Two", type: "project", updatedAt: "2026-03-02" },
+      ]);
+      const result = handleSlashCommand(makeCtx("memory search topic"), makeApi());
+      expect(result.text).toContain("Topic One");
+      expect(result.text).toContain("Topic Two");
+    });
+
+    it("returns no results for no matches", () => {
+      mockProvider.search.mockReturnValue([]);
+      const result = handleSlashCommand(makeCtx("memory search nothinghere"), makeApi());
+      expect(result.text).toContain("No results");
+    });
+
+    it("returns usage when no query provided", () => {
+      const result = handleSlashCommand(makeCtx("memory search"), makeApi());
+      expect(result.text).toContain("Usage");
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // memory list
+  // -------------------------------------------------------------------------
+
+  describe("memory list", () => {
+    it("lists all entries", () => {
+      mockProvider.list.mockReturnValue([
+        { slug: "entry-a", title: "Entry A", type: "user", updatedAt: "2026-03-01" },
+        { slug: "entry-b", title: "Entry B", type: "reference", updatedAt: "2026-03-02" },
+      ]);
+      const result = handleSlashCommand(makeCtx("memory list"), makeApi());
+      expect(result.text).toContain("Entry A");
+      expect(result.text).toContain("Entry B");
+    });
+
+    it("filters by type", () => {
+      mockProvider.list.mockReturnValue([
+        { slug: "user-entry", title: "User Entry", type: "user", updatedAt: "2026-03-01" },
+      ]);
+      const result = handleSlashCommand(makeCtx("memory list --type user"), makeApi());
+      expect(result.text).toContain("User Entry");
+      expect(mockProvider.list).toHaveBeenCalledWith({ type: "user" });
+    });
+
+    it("returns empty message when no entries", () => {
+      mockProvider.list.mockReturnValue([]);
+      const result = handleSlashCommand(makeCtx("memory list"), makeApi());
+      expect(result.text).toContain("No memory entries found");
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // memory migrate
+  // -------------------------------------------------------------------------
+
+  describe("memory migrate", () => {
+    it("reports migration results", () => {
+      mockedExistsSync.mockReturnValue(true);
+      mockedReadFileSync.mockReturnValue(
+        "- Some flat memory entry\n- Another entry\n- Third entry\n- skip this",
+      );
+      mockProvider.migrate.mockReturnValue({ imported: 3, skipped: 1 });
+      const result = handleSlashCommand(makeCtx("memory migrate"), makeApi());
+      expect(result.text).toContain("3");
+      expect(result.text).toContain("1");
+    });
+
+    it("warns when index already has typed table", () => {
+      mockedExistsSync.mockReturnValue(true);
+      mockedReadFileSync.mockReturnValue(
+        "| Topic | Type | Updated |\n|---|---|---|\n| Foo | user | 2026-01-01 |",
+      );
+      const result = handleSlashCommand(makeCtx("memory migrate"), makeApi());
+      expect(result.text).toContain("already exists");
+    });
+
+    it("says nothing to migrate when file does not exist", () => {
+      mockedExistsSync.mockReturnValue(false);
+      const result = handleSlashCommand(makeCtx("memory migrate"), makeApi());
+      expect(result.text).toContain("Nothing to migrate");
+    });
+
+    it("says nothing to migrate when file is empty", () => {
+      mockedExistsSync.mockReturnValue(true);
+      mockedReadFileSync.mockReturnValue("   ");
+      const result = handleSlashCommand(makeCtx("memory migrate"), makeApi());
+      expect(result.text).toContain("Nothing to migrate");
     });
   });
 });
