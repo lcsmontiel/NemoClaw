@@ -59,6 +59,8 @@ network_policies:
         protocol: rest
         enforcement: enforce
         access: full
+    binaries:
+      - { path: "/**" }
 
   nvidia:
     name: nvidia
@@ -73,6 +75,8 @@ network_policies:
         protocol: rest
         enforcement: enforce
         access: full
+    binaries:
+      - { path: "/**" }
 
   github:
     name: github
@@ -87,6 +91,8 @@ network_policies:
         protocol: rest
         enforcement: enforce
         access: full
+    binaries:
+      - { path: "/**" }
 
   clawhub:
     name: clawhub
@@ -96,6 +102,8 @@ network_policies:
         protocol: rest
         enforcement: enforce
         access: full
+    binaries:
+      - { path: "/**" }
 
   openclaw_api:
     name: openclaw_api
@@ -105,6 +113,8 @@ network_policies:
         protocol: rest
         enforcement: enforce
         access: full
+    binaries:
+      - { path: "/**" }
 
   openclaw_docs:
     name: openclaw_docs
@@ -114,6 +124,8 @@ network_policies:
         protocol: rest
         enforcement: enforce
         access: full
+    binaries:
+      - { path: "/**" }
 
   npm_registry:
     name: npm_registry
@@ -128,6 +140,8 @@ network_policies:
         protocol: rest
         enforcement: enforce
         access: full
+    binaries:
+      - { path: "/**" }
 
   # ── Messaging endpoints ──
 
@@ -139,6 +153,8 @@ network_policies:
         protocol: rest
         enforcement: enforce
         access: full
+    binaries:
+      - { path: "/**" }
 
   discord:
     name: discord
@@ -163,6 +179,8 @@ network_policies:
         protocol: rest
         enforcement: enforce
         access: full
+    binaries:
+      - { path: "/**" }
 
   slack:
     name: slack
@@ -192,6 +210,8 @@ network_policies:
         protocol: rest
         enforcement: enforce
         access: full
+    binaries:
+      - { path: "/**" }
 
   # ── Package registries ──
 
@@ -208,6 +228,8 @@ network_policies:
         protocol: rest
         enforcement: enforce
         access: full
+    binaries:
+      - { path: "/**" }
 
   brew:
     name: brew
@@ -237,6 +259,8 @@ network_policies:
         protocol: rest
         enforcement: enforce
         access: full
+    binaries:
+      - { path: "/**" }
 
   # ── Third-party services ──
 
@@ -258,6 +282,8 @@ network_policies:
         protocol: rest
         enforcement: enforce
         access: full
+    binaries:
+      - { path: "/**" }
 
   outlook:
     name: outlook
@@ -282,6 +308,8 @@ network_policies:
         protocol: rest
         enforcement: enforce
         access: full
+    binaries:
+      - { path: "/**" }
 
   huggingface:
     name: huggingface
@@ -301,6 +329,8 @@ network_policies:
         protocol: rest
         enforcement: enforce
         access: full
+    binaries:
+      - { path: "/**" }
 
   brave:
     name: brave
@@ -310,3 +340,5 @@ network_policies:
         protocol: rest
         enforcement: enforce
         access: full
+    binaries:
+      - { path: "/**" }
