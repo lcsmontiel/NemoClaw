@@ -150,6 +150,10 @@ describe("commands/slash", () => {
       expect(result.text).toContain("eject");
       expect(result.text).toContain("onboard");
       expect(result.text).toContain("memory");
+      expect(result.text).toContain("memory read");
+      expect(result.text).toContain("memory search");
+      expect(result.text).toContain("memory list");
+      expect(result.text).toContain("memory migrate");
     });
 
     it("returns help text for unknown subcommand", () => {
