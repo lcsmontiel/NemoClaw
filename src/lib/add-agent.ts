@@ -92,11 +92,14 @@ export async function addAgent(opts: AddAgentOptions): Promise<AgentInstance | n
   const agentDef = loadAgent(agentType);
 
   // ── Step 3: Verify binary in sandbox ───────────────────────────
-  const binaryPath = agentDef.binary_path || `/usr/local/bin/${agentType}`;
-  const binaryCheck = sandboxExecCapture(sandboxName, `test -x ${binaryPath} && echo found`);
+  // Use `command -v` (not `test -x /full/path`) because the binary may be
+  // installed via npm/pip in a non-standard prefix — the start scripts use
+  // `command -v openclaw` for the same reason.
+  const binaryName = agentType;
+  const binaryCheck = sandboxExecCapture(sandboxName, `command -v ${binaryName} && echo found`);
   if (!binaryCheck || !binaryCheck.includes("found")) {
     console.error(`\n  ${agentDef.displayName} binary not found in sandbox '${sandboxName}'.`);
-    console.error(`  The sandbox image does not contain '${binaryPath}'.`);
+    console.error(`  The sandbox image does not contain '${binaryName}' on PATH.`);
     console.error(`  To use ${agentDef.displayName}, rebuild with a multi-agent image.`);
     return null;
   }
