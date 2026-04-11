@@ -128,7 +128,22 @@ def deliver_openclaw(agent, message, config_dir):
 def deliver_hermes(agent, message):
     """Deliver a message to a Hermes agent via its OpenAI-compatible API."""
     port = agent.get("port", 8642)
+    config_dir = agent.get("configDir", "")
     url = f"http://127.0.0.1:{port}/v1/chat/completions"
+
+    # Read API key from the agent's .env file
+    api_key = ""
+    env_file = os.path.join(config_dir, ".env") if config_dir else ""
+    if env_file and os.path.exists(env_file):
+        for line in open(env_file):
+            if line.startswith("API_SERVER_KEY="):
+                api_key = line.strip().split("=", 1)[1]
+                break
+
+    headers = {"Content-Type": "application/json"}
+    if api_key:
+        headers["Authorization"] = f"Bearer {api_key}"
+
     payload = json.dumps({
         "model": "default",
         "messages": [
@@ -139,7 +154,7 @@ def deliver_hermes(agent, message):
     }).encode()
     req = Request(
         url, data=payload,
-        headers={"Content-Type": "application/json"},
+        headers=headers,
         method="POST",
     )
     for attempt in range(3):

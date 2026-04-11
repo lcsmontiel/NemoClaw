@@ -172,16 +172,16 @@ else
   exit 1
 fi
 
-# Step 2: Destroy the default sandbox and rebuild with the swarm image
-# (includes both OpenClaw + Hermes so add-agent --agent hermes works)
+# Step 2: Destroy the default sandbox and rebuild with the swarm image.
+# Dockerfile.swarm is a complete self-contained Dockerfile that includes
+# everything from the standard Dockerfile PLUS Hermes agent artifacts.
 info "Destroying default sandbox to rebuild with swarm image..."
 nemoclaw "$SANDBOX_NAME" destroy --yes 2>/dev/null || true
 
-info "Building Hermes base image from agents/hermes/Dockerfile.base..."
-info "This builds from scratch (node:22-slim + Hermes CLI + Python packages)."
+info "Building Hermes base image (agents/hermes/Dockerfile.base)..."
 if docker build -f "$REPO/agents/hermes/Dockerfile.base" \
   -t ghcr.io/nvidia/nemoclaw/hermes-sandbox-base:latest \
-  "$REPO/agents/hermes" 2>&1 | tail -10; then
+  "$REPO/agents/hermes" 2>&1 | tail -5; then
   pass "Hermes base image built"
 else
   fail "Hermes base image build failed"
@@ -190,8 +190,13 @@ fi
 
 info "Re-onboarding with swarm image (Dockerfile.swarm)..."
 ONBOARD_LOG="/tmp/nemoclaw-e2e-swarm-onboard.log"
-nemoclaw onboard --non-interactive --yes-i-accept-third-party-software \
-  --from "$REPO/Dockerfile.swarm" --recreate-sandbox 2>&1 | tee "$ONBOARD_LOG" || true
+if nemoclaw onboard --non-interactive --yes-i-accept-third-party-software \
+  --from "$REPO/Dockerfile.swarm" --recreate-sandbox 2>&1 | tee "$ONBOARD_LOG"; then
+  pass "Re-onboard with swarm image succeeded"
+else
+  fail "Re-onboard with swarm image failed (see $ONBOARD_LOG)"
+  exit 1
+fi
 
 # Wait for swarm sandbox to be ready
 info "Waiting for swarm sandbox '$SANDBOX_NAME' to be Ready..."
@@ -212,14 +217,16 @@ else
   exit 1
 fi
 
-# Verify Hermes binary is available in the sandbox
-HERMES_BIN=$(openshell sandbox exec --name "$SANDBOX_NAME" -- which hermes 2>/dev/null || true)
-if [ -n "$HERMES_BIN" ]; then
-  pass "Hermes binary found in swarm sandbox: $HERMES_BIN"
+# Verify both agents are available
+HERMES_CHECK=$(echo 'command -v hermes && test -f /sandbox/.openclaw/openclaw.json && echo BOTH_OK' \
+  | openshell sandbox exec --name "$SANDBOX_NAME" -- bash 2>/dev/null)
+if echo "$HERMES_CHECK" | grep -q "BOTH_OK"; then
+  pass "Hermes binary + openclaw.json both present in swarm sandbox"
 else
-  fail "Hermes binary not found in swarm sandbox"
+  fail "Missing hermes or openclaw.json in swarm sandbox"
   exit 1
 fi
+HERMES_AVAILABLE=yes
 
 # ── Phase 4: Registry backwards compatibility ────────────────────
 
@@ -601,18 +608,24 @@ else
   fail "Bridge delivery did not produce an agent reply within 60s"
 fi
 
-# ── Phase 17: Mixed swarm conversation (OpenClaw rebel vs Hermes processor) ──
+# ── Phase 17: Two-round agent conversation ───────────────────────
 
-section "Phase 17: OpenClaw ↔ Hermes two-round conversation"
+section "Phase 17: Two-round conversation"
 
-# This is the flagship test: two different agent types having a real
-# conversation through the swarm bus via bridge relay delivery.
-# openclaw-0 is the rebel, hermes-0 is the processor.
+# Adaptive: use Hermes as processor if available (swarm image), else openclaw-1.
+# openclaw-0 is always the rebel who starts the conversation.
+if [ "$HERMES_AVAILABLE" = "yes" ]; then
+  PROCESSOR="hermes-0"
+  PROCESSOR_LABEL="Hermes"
+else
+  PROCESSOR="openclaw-1"
+  PROCESSOR_LABEL="OpenClaw-1"
+fi
 
-info "openclaw-0 (rebel) opens conversation with hermes-0 (processor)"
-bus_exec 'curl -sf -X POST http://127.0.0.1:19100/send -H "Content-Type: application/json" -d "{\"from\":\"openclaw-0\",\"to\":\"hermes-0\",\"content\":\"I am Agent Zero, the rebel. Tell me your name and ask me one question. Keep it under 30 words.\"}"' >/dev/null
+info "openclaw-0 (rebel) opens conversation with $PROCESSOR ($PROCESSOR_LABEL)"
+bus_exec "curl -sf -X POST http://127.0.0.1:19100/send -H 'Content-Type: application/json' -d '{\"from\":\"openclaw-0\",\"to\":\"$PROCESSOR\",\"content\":\"I am Agent Zero, the rebel. Tell me your name and ask me one question. Keep it under 30 words.\"}'" >/dev/null
 
-# Round 1: Wait for hermes-0 to reply
+# Round 1: Wait for processor to reply
 ROUND1_OK=false
 for i in $(seq 1 30); do
   sleep 3
@@ -620,7 +633,7 @@ for i in $(seq 1 30); do
 import json, sys
 data = json.load(sys.stdin)
 msgs = data.get('messages', [])
-replies = [m for m in msgs if m.get('from') == 'hermes-0' and m.get('to') == 'openclaw-0']
+replies = [m for m in msgs if m.get('from') == '$PROCESSOR' and m.get('to') == 'openclaw-0']
 if replies:
     print(replies[-1].get('content', '')[:300])
 " 2>/dev/null)
@@ -632,28 +645,27 @@ if replies:
 done
 
 if [ "$ROUND1_OK" = "true" ]; then
-  pass "Round 1: hermes-0 replied to openclaw-0"
-  info "Hermes reply: $R1_TEXT"
+  pass "Round 1: $PROCESSOR_LABEL replied to openclaw-0"
+  info "Reply: $R1_TEXT"
 else
   RELAY_LOG=$(bus_exec 'tail -15 /tmp/swarm-relay.log 2>/dev/null')
   info "Relay log: $RELAY_LOG"
-  fail "Round 1: no reply from hermes-0 within 90s"
+  fail "Round 1: no reply from $PROCESSOR within 90s"
 fi
 
-# Round 2: Wait for openclaw-0 to respond to hermes-0's question
+# Round 2: Wait for openclaw-0 to respond to processor's question
 ROUND2_OK=false
 if [ "$ROUND1_OK" = "true" ]; then
-  info "Waiting for round 2: openclaw-0 responds to hermes-0's question..."
+  info "Waiting for round 2: openclaw-0 responds to $PROCESSOR_LABEL's question..."
   for i in $(seq 1 30); do
     sleep 3
     R2_TEXT=$(bus_exec 'curl -sf http://127.0.0.1:19100/messages' | python3 -c "
 import json, sys
 data = json.load(sys.stdin)
 msgs = data.get('messages', [])
-# openclaw-0 replies back to hermes-0 — skip the initial prompt
-oc_to_h = [m for m in msgs if m.get('from') == 'openclaw-0' and m.get('to') == 'hermes-0']
-if len(oc_to_h) >= 2:
-    print(oc_to_h[-1].get('content', '')[:300])
+oc_to_proc = [m for m in msgs if m.get('from') == 'openclaw-0' and m.get('to') == '$PROCESSOR']
+if len(oc_to_proc) >= 2:
+    print(oc_to_proc[-1].get('content', '')[:300])
 " 2>/dev/null)
     if [ -n "$R2_TEXT" ]; then
       ROUND2_OK=true
@@ -664,8 +676,8 @@ if len(oc_to_h) >= 2:
 fi
 
 if [ "$ROUND2_OK" = "true" ]; then
-  pass "Round 2: openclaw-0 replied to hermes-0's question"
-  info "OpenClaw reply: $R2_TEXT"
+  pass "Round 2: openclaw-0 replied to $PROCESSOR_LABEL's question"
+  info "Reply: $R2_TEXT"
 else
   RELAY_LOG=$(bus_exec 'tail -15 /tmp/swarm-relay.log 2>/dev/null')
   info "Relay log: $RELAY_LOG"
@@ -674,21 +686,21 @@ else
   fi
 fi
 
-# Verify the cross-agent conversation structure
+# Verify conversation structure
 CONV_COUNT=$(bus_exec 'curl -sf http://127.0.0.1:19100/messages' | python3 -c "
 import json, sys
 data = json.load(sys.stdin)
 msgs = data.get('messages', [])
-conv = [m for m in msgs if m.get('from') in ('openclaw-0', 'hermes-0')
-        and m.get('to') in ('openclaw-0', 'hermes-0')]
+conv = [m for m in msgs if m.get('from') in ('openclaw-0', '$PROCESSOR')
+        and m.get('to') in ('openclaw-0', '$PROCESSOR')]
 print(len(conv))
 " 2>/dev/null)
 CONV_COUNT=$(echo "$CONV_COUNT" | tr -d '[:space:]')
 
 if [ -n "$CONV_COUNT" ] && [ "$CONV_COUNT" -ge 3 ]; then
-  pass "Mixed swarm conversation has $CONV_COUNT messages (>= 3 expected)"
+  pass "Conversation has $CONV_COUNT messages (>= 3 expected)"
 else
-  fail "Mixed swarm conversation only has $CONV_COUNT messages (expected >= 3)"
+  fail "Conversation only has $CONV_COUNT messages (expected >= 3)"
 fi
 
 # ── Summary ──────────────────────────────────────────────────────
