@@ -6,8 +6,7 @@
  *
  * The bus script is embedded here so that add-agent can deploy it into any
  * sandbox without depending on host filesystem paths. This is the single
- * source of truth — the standalone scripts/nemoclaw-swarm-bus.py is kept
- * in sync for local development and Dockerfile.swarm bake-in.
+ * source of truth — add-agent writes it into the sandbox at deploy time.
  */
 
 /* eslint-disable max-len */
