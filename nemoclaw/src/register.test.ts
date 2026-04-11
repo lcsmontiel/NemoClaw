@@ -31,6 +31,7 @@ function createMockApi(): OpenClawPluginApi {
     registerCommand: vi.fn(),
     registerProvider: vi.fn(),
     registerService: vi.fn(),
+    registerTool: vi.fn(),
     resolvePath: vi.fn((p: string) => p),
     on: vi.fn(),
   };

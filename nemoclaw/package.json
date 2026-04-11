@@ -22,6 +22,7 @@
     "clean": "rm -rf dist/"
   },
   "dependencies": {
+    "@sinclair/typebox": "^0.34.49",
     "commander": "^13.1.0",
     "execa": "^9.6.1",
     "json5": "^2.2.3",

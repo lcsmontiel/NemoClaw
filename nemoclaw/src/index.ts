@@ -17,6 +17,7 @@ import {
   describeOnboardProvider,
   loadOnboardConfig,
 } from "./onboard/config.js";
+import { createMemoryTools } from "./memory/tools.js";
 
 // ---------------------------------------------------------------------------
 // OpenClaw Plugin SDK compatible types (mirrors openclaw/plugin-sdk)
@@ -118,6 +119,10 @@ export interface OpenClawPluginApi {
   registerCommand: (command: PluginCommandDefinition) => void;
   registerProvider: (provider: ProviderPlugin) => void;
   registerService: (service: PluginService) => void;
+  registerTool: (
+    tool: unknown,
+    opts?: { name?: string; names?: string[]; optional?: boolean },
+  ) => void;
   resolvePath: (input: string) => string;
   on: (hookName: string, handler: (...args: unknown[]) => void) => void;
 }
@@ -243,7 +248,16 @@ export default function register(api: OpenClawPluginApi): void {
     handler: (ctx) => handleSlashCommand(ctx, api),
   });
 
-  // 2. Register nvidia-nim provider — use onboard config if available
+  // 2. Register memory tools (only active when typed-index mode is enabled)
+  api.registerTool(
+    (ctx: { workspaceDir?: string }) => {
+      const workspaceDir = ctx.workspaceDir ?? "/sandbox/.openclaw/workspace";
+      return createMemoryTools(workspaceDir);
+    },
+    { names: ["nemoclaw_memory_save", "nemoclaw_memory_read", "nemoclaw_memory_search"] },
+  );
+
+  // 3. Register nvidia-nim provider — use onboard config if available
   const onboardCfg = loadOnboardConfig();
   const providerCredentialEnv = onboardCfg?.credentialEnv ?? "NVIDIA_API_KEY";
   api.registerProvider(registeredProviderForConfig(onboardCfg, providerCredentialEnv));

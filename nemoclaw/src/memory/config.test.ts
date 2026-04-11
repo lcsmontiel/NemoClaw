@@ -134,8 +134,9 @@ describe("memory/config", () => {
       const content = getOrThrow(AGENTS_PATH);
       expect(content).toContain(MARKER_START);
       expect(content).toContain(MARKER_END);
-      expect(content).toContain("/nemoclaw memory read");
-      expect(content).toContain("/nemoclaw memory search");
+      expect(content).toContain("nemoclaw_memory_save");
+      expect(content).toContain("nemoclaw_memory_read");
+      expect(content).toContain("nemoclaw_memory_search");
     });
 
     it("appends to existing AGENTS.md content", () => {

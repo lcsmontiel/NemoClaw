@@ -69,11 +69,16 @@ const MEMORY_INSTRUCTIONS = `${MARKER_START}
 Your memory uses a typed index. At session start, you see a table in MEMORY.md
 with titles, types, and dates — not the full content.
 
-**To read a memory topic:**
-\`/nemoclaw memory read <slug>\`
+You have three memory tools available:
 
-**To search for something:**
-\`/nemoclaw memory search <query>\`
+**nemoclaw_memory_save** — Save a new memory entry.
+  Parameters: title (string), type (user|project|feedback|reference), content (string), description (optional string)
+
+**nemoclaw_memory_read** — Read the full content of a memory entry by its slug.
+  Parameters: slug (string)
+
+**nemoclaw_memory_search** — Search memory entries by keyword. Returns matching slugs.
+  Parameters: query (string)
 
 **When saving new memories, use the appropriate type:**
 - \`user\` — preferences, habits, context about the user
@@ -82,7 +87,10 @@ with titles, types, and dates — not the full content.
 - \`reference\` — frequently-referenced facts, APIs, commands
 
 **Important:** Do NOT load all topics at once. Read the index, identify what is
-relevant to the current task, and load only those topics.
+relevant to the current task, and use nemoclaw_memory_read to load only those topics.
+
+When the user asks you to remember something, use nemoclaw_memory_save.
+When you need to recall something, use nemoclaw_memory_search then nemoclaw_memory_read.
 
 ${MARKER_END}`;
 
