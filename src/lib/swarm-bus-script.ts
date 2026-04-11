@@ -322,6 +322,39 @@ def deliver_openclaw(agent, message, config_dir):
             return None, "openclaw binary not found"
     return None, "no text after 3 attempts"
 
+def deliver_hermes(agent, message):
+    """Deliver a message to a Hermes agent via its OpenAI-compatible API."""
+    port = agent.get("port", 8642)
+    url = f"http://127.0.0.1:{port}/v1/chat/completions"
+    payload = json.dumps({
+        "model": "default",
+        "messages": [
+            {"role": "system", "content": "You are in a multi-agent swarm. Respond concisely to the other agent."},
+            {"role": "user", "content": f"[from: {message['from']}] {message['content']}"}
+        ],
+        "max_tokens": 512
+    }).encode()
+    req = Request(url, data=payload, headers={"Content-Type": "application/json"}, method="POST")
+    for attempt in range(3):
+        try:
+            resp = urlopen(req, timeout=45)
+            data = json.loads(resp.read())
+            text = find_text_in_response(data)
+            if not text:
+                choice = data.get("choices", [{}])[0]
+                text = choice.get("message", {}).get("content", "")
+            if text and text.strip():
+                return text.strip(), None
+            log(f"hermes attempt {attempt+1}: no text, keys={list(data.keys())}")
+            time.sleep(3)
+        except (URLError, OSError) as e:
+            log(f"hermes attempt {attempt+1}: {e}")
+            time.sleep(3)
+        except (json.JSONDecodeError, KeyError, IndexError) as e:
+            log(f"hermes attempt {attempt+1}: parse error: {e}")
+            time.sleep(3)
+    return None, "no text after 3 attempts"
+
 def relay_loop(bus_url, poll_interval):
     last_ts = ""
     manifest = None
@@ -361,6 +394,8 @@ def relay_loop(bus_url, poll_interval):
             log(f"delivering {msg['from']} -> {target} ({agent_type})")
             if agent_type == "openclaw":
                 reply_text, error = deliver_openclaw(agent, msg, config_dir)
+            elif agent_type == "hermes":
+                reply_text, error = deliver_hermes(agent, msg)
             else:
                 reply_text = None
                 error = f"unsupported agent type: {agent_type}"

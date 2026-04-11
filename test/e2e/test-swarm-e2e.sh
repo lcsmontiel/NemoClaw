@@ -104,16 +104,17 @@ else
   info "openshell not yet installed, skipping cleanup"
 fi
 
-# ── Phase 3: Install & Onboard ──────────────────────────────────
+# ── Phase 3: Install & Onboard (swarm image with Hermes) ─────────
 
-section "Phase 3: Install & Onboard"
+section "Phase 3: Install & Onboard (swarm image)"
 
-info "Running install.sh --non-interactive..."
 export NEMOCLAW_NON_INTERACTIVE=1
 export NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1
 export NEMOCLAW_SANDBOX_NAME="$SANDBOX_NAME"
 export NEMOCLAW_RECREATE_SANDBOX=1
 
+# Step 1: Run install.sh to get nemoclaw + openshell + default sandbox
+info "Running install.sh --non-interactive (standard install)..."
 INSTALL_LOG="/tmp/nemoclaw-e2e-swarm-install.log"
 if bash "$REPO/install.sh" --non-interactive 2>&1 | tee "$INSTALL_LOG"; then
   pass "install.sh completed"
@@ -168,6 +169,52 @@ if openshell sandbox list 2>/dev/null | grep -q "Ready"; then
   pass "Sandbox '$SANDBOX_NAME' is Ready"
 else
   fail "Sandbox '$SANDBOX_NAME' not Ready after ${MAX_WAIT}s"
+  exit 1
+fi
+
+# Step 2: Destroy the default sandbox and rebuild with the swarm image
+# (includes both OpenClaw + Hermes so add-agent --agent hermes works)
+info "Destroying default sandbox to rebuild with swarm image..."
+nemoclaw "$SANDBOX_NAME" destroy --yes 2>/dev/null || true
+
+info "Building Hermes base image from agents/hermes/Dockerfile..."
+if docker build -f "$REPO/agents/hermes/Dockerfile" -t nemoclaw-hermes-sandbox-base:latest "$REPO/agents/hermes" 2>&1 | tail -5; then
+  pass "Hermes base image built"
+else
+  fail "Hermes base image build failed"
+  exit 1
+fi
+
+info "Re-onboarding with swarm image (Dockerfile.swarm)..."
+ONBOARD_LOG="/tmp/nemoclaw-e2e-swarm-onboard.log"
+nemoclaw onboard --non-interactive --yes-i-accept-third-party-software \
+  --from "$REPO/Dockerfile.swarm" --recreate-sandbox 2>&1 | tee "$ONBOARD_LOG" || true
+
+# Wait for swarm sandbox to be ready
+info "Waiting for swarm sandbox '$SANDBOX_NAME' to be Ready..."
+ELAPSED=0
+while [ $ELAPSED -lt $MAX_WAIT ]; do
+  if openshell sandbox list 2>/dev/null | grep -q "Ready"; then
+    break
+  fi
+  sleep 10
+  ELAPSED=$((ELAPSED + 10))
+  info "  waiting... (${ELAPSED}s / ${MAX_WAIT}s)"
+done
+
+if openshell sandbox list 2>/dev/null | grep -q "Ready"; then
+  pass "Swarm sandbox '$SANDBOX_NAME' is Ready (OpenClaw + Hermes)"
+else
+  fail "Swarm sandbox not Ready after ${MAX_WAIT}s (see $ONBOARD_LOG)"
+  exit 1
+fi
+
+# Verify Hermes binary is available in the sandbox
+HERMES_BIN=$(openshell sandbox exec --name "$SANDBOX_NAME" -- which hermes 2>/dev/null || true)
+if [ -n "$HERMES_BIN" ]; then
+  pass "Hermes binary found in swarm sandbox: $HERMES_BIN"
+else
+  fail "Hermes binary not found in swarm sandbox"
   exit 1
 fi
 
@@ -551,23 +598,26 @@ else
   fail "Bridge delivery did not produce an agent reply within 60s"
 fi
 
-# ── Phase 17: Two-round agent conversation ───────────────────────
+# ── Phase 17: Mixed swarm conversation (OpenClaw rebel vs Hermes processor) ──
 
-section "Phase 17: Two-round conversation"
+section "Phase 17: OpenClaw ↔ Hermes two-round conversation"
 
-info "openclaw-0 (rebel) starts conversation with openclaw-1 (processor)"
-bus_exec 'curl -sf -X POST http://127.0.0.1:19100/send -H "Content-Type: application/json" -d "{\"from\":\"openclaw-0\",\"to\":\"openclaw-1\",\"content\":\"I am Agent Zero. Tell me your name and ask me one question. Keep it under 20 words.\"}"' >/dev/null
+# This is the flagship test: two different agent types having a real
+# conversation through the swarm bus via bridge relay delivery.
+# openclaw-0 is the rebel, hermes-0 is the processor.
 
-# Wait for round 1 reply from openclaw-1
+info "openclaw-0 (rebel) opens conversation with hermes-0 (processor)"
+bus_exec 'curl -sf -X POST http://127.0.0.1:19100/send -H "Content-Type: application/json" -d "{\"from\":\"openclaw-0\",\"to\":\"hermes-0\",\"content\":\"I am Agent Zero, the rebel. Tell me your name and ask me one question. Keep it under 30 words.\"}"' >/dev/null
+
+# Round 1: Wait for hermes-0 to reply
 ROUND1_OK=false
-for i in $(seq 1 25); do
+for i in $(seq 1 30); do
   sleep 3
   R1_TEXT=$(bus_exec 'curl -sf http://127.0.0.1:19100/messages' | python3 -c "
 import json, sys
 data = json.load(sys.stdin)
 msgs = data.get('messages', [])
-replies = [m for m in msgs if m.get('from') == 'openclaw-1' and m.get('to') == 'openclaw-0'
-           and 'Agent Zero' not in m.get('content', '')]
+replies = [m for m in msgs if m.get('from') == 'hermes-0' and m.get('to') == 'openclaw-0']
 if replies:
     print(replies[-1].get('content', '')[:300])
 " 2>/dev/null)
@@ -575,67 +625,67 @@ if replies:
     ROUND1_OK=true
     break
   fi
-  info "  round 1 waiting... (${i}/25)"
+  info "  round 1 waiting... (${i}/30)"
 done
 
 if [ "$ROUND1_OK" = "true" ]; then
-  pass "Round 1: openclaw-1 replied"
-  info "Round 1 reply: $R1_TEXT"
+  pass "Round 1: hermes-0 replied to openclaw-0"
+  info "Hermes reply: $R1_TEXT"
 else
-  RELAY_LOG=$(bus_exec 'tail -10 /tmp/swarm-relay.log 2>/dev/null')
+  RELAY_LOG=$(bus_exec 'tail -15 /tmp/swarm-relay.log 2>/dev/null')
   info "Relay log: $RELAY_LOG"
-  fail "Round 1: no reply from openclaw-1 within 75s"
+  fail "Round 1: no reply from hermes-0 within 90s"
 fi
 
-# Wait for round 2 reply from openclaw-0 (relay delivers openclaw-1's reply to openclaw-0)
+# Round 2: Wait for openclaw-0 to respond to hermes-0's question
 ROUND2_OK=false
 if [ "$ROUND1_OK" = "true" ]; then
-  info "Waiting for round 2: openclaw-0 responds to openclaw-1's question..."
-  for i in $(seq 1 25); do
+  info "Waiting for round 2: openclaw-0 responds to hermes-0's question..."
+  for i in $(seq 1 30); do
     sleep 3
     R2_TEXT=$(bus_exec 'curl -sf http://127.0.0.1:19100/messages' | python3 -c "
 import json, sys
 data = json.load(sys.stdin)
 msgs = data.get('messages', [])
-# openclaw-0 replies back to openclaw-1 — but skip the initial prompt
-r0_to_r1 = [m for m in msgs if m.get('from') == 'openclaw-0' and m.get('to') == 'openclaw-1']
-if len(r0_to_r1) >= 2:
-    print(r0_to_r1[-1].get('content', '')[:300])
+# openclaw-0 replies back to hermes-0 — skip the initial prompt
+oc_to_h = [m for m in msgs if m.get('from') == 'openclaw-0' and m.get('to') == 'hermes-0']
+if len(oc_to_h) >= 2:
+    print(oc_to_h[-1].get('content', '')[:300])
 " 2>/dev/null)
     if [ -n "$R2_TEXT" ]; then
       ROUND2_OK=true
       break
     fi
-    info "  round 2 waiting... (${i}/25)"
+    info "  round 2 waiting... (${i}/30)"
   done
 fi
 
 if [ "$ROUND2_OK" = "true" ]; then
-  pass "Round 2: openclaw-0 replied to openclaw-1's question"
-  info "Round 2 reply: $R2_TEXT"
+  pass "Round 2: openclaw-0 replied to hermes-0's question"
+  info "OpenClaw reply: $R2_TEXT"
 else
-  RELAY_LOG=$(bus_exec 'tail -10 /tmp/swarm-relay.log 2>/dev/null')
+  RELAY_LOG=$(bus_exec 'tail -15 /tmp/swarm-relay.log 2>/dev/null')
   info "Relay log: $RELAY_LOG"
   if [ "$ROUND1_OK" = "true" ]; then
-    fail "Round 2: no reply from openclaw-0 within 75s"
+    fail "Round 2: no reply from openclaw-0 within 90s"
   fi
 fi
 
-# Verify conversation structure on the bus
+# Verify the cross-agent conversation structure
 CONV_COUNT=$(bus_exec 'curl -sf http://127.0.0.1:19100/messages' | python3 -c "
 import json, sys
 data = json.load(sys.stdin)
 msgs = data.get('messages', [])
-agent_msgs = [m for m in msgs if m.get('from') in ('openclaw-0', 'openclaw-1')
-              and m.get('to') in ('openclaw-0', 'openclaw-1')]
-print(len(agent_msgs))
+conv = [m for m in msgs if m.get('from') in ('openclaw-0', 'hermes-0')
+        and m.get('to') in ('openclaw-0', 'hermes-0')]
+print(len(conv))
 " 2>/dev/null)
 CONV_COUNT=$(echo "$CONV_COUNT" | tr -d '[:space:]')
 
 if [ -n "$CONV_COUNT" ] && [ "$CONV_COUNT" -ge 3 ]; then
-  pass "Conversation has $CONV_COUNT agent messages (>= 3 expected)"
+  pass "Mixed swarm conversation has $CONV_COUNT messages (>= 3 expected)"
 else
-  fail "Conversation only has $CONV_COUNT agent messages (expected >= 3)"
+  fail "Mixed swarm conversation only has $CONV_COUNT messages (expected >= 3)"
 fi
 
 # ── Summary ──────────────────────────────────────────────────────
