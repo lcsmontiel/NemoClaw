@@ -307,10 +307,10 @@ def deliver_openclaw(agent, message, config_dir):
                 time.sleep(3)
                 continue
             data = json.loads(result.stdout)
-            text = find_text_in_response(data.get("result", {}))
+            text = find_text_in_response(data)
             if text:
                 return text, None
-            log(f"attempt {attempt+1}: no text in response, keys={list(data.get('result',{}).keys())}, stdout={result.stdout[:300]}")
+            log(f"attempt {attempt+1}: no text, keys={list(data.keys())}, stdout={result.stdout[:300]}")
             time.sleep(3)
         except subprocess.TimeoutExpired:
             log(f"attempt {attempt+1}: timeout")
