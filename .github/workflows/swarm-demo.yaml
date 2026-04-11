@@ -1,0 +1,65 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+#
+# Swarm Demo — Philosophical Crustacean Dialogues
+#
+# Deploys two agents (OpenClaw + Hermes) with distinct personalities and
+# verifies autonomous multi-turn dialogue over the swarm bus. Manual-only;
+# not part of the nightly suite because each run costs ~$0.05 in API calls
+# and takes 10-15 minutes.
+#
+# Trigger from the Actions tab or via:
+#   gh workflow run swarm-demo.yaml --ref feat/multi-agent-swarm
+#   gh workflow run swarm-demo.yaml -f min_exchanges=5 -f timeout=900
+
+name: Swarm Demo
+
+on:
+  workflow_dispatch:
+    inputs:
+      min_exchanges:
+        description: "Minimum reply exchanges to pass (each = 2 messages)"
+        required: false
+        default: "3"
+        type: string
+      timeout:
+        description: "Seconds to wait for exchanges"
+        required: false
+        default: "600"
+        type: string
+
+jobs:
+  swarm-demo:
+    if: github.repository == 'NVIDIA/NemoClaw'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Run swarm demo
+        env:
+          NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+          NEMOCLAW_NON_INTERACTIVE: "1"
+          NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
+          NEMOCLAW_SANDBOX_NAME: "e2e-swarm-demo"
+          NEMOCLAW_RECREATE_SANDBOX: "1"
+          SWARM_DEMO_MIN_EXCHANGES: ${{ inputs.min_exchanges || '3' }}
+          SWARM_DEMO_TIMEOUT: ${{ inputs.timeout || '600' }}
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          if [ -f "$HOME/.bashrc" ]; then
+            source "$HOME/.bashrc" 2>/dev/null || true
+          fi
+          export PATH="$HOME/.local/bin:$PATH"
+          bash test/e2e/test-swarm-demo.sh
+
+      - name: Upload logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: swarm-demo-logs
+          path: |
+            /tmp/nemoclaw-e2e-swarm-demo-install.log
+            /tmp/nemoclaw-e2e-swarm-demo-onboard.log
+          if-no-files-found: ignore
