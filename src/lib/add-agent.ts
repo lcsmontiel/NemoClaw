@@ -29,7 +29,7 @@ const {
 const { createInstanceMessagingProviders, parseMessagingFlags } = require("./swarm-messaging");
 const { mergeAgentPolicyAdditions } = require("./policies");
 const { SWARM_BUS_LOG } = require("./swarm-manifest");
-const { SWARM_BUS_SCRIPT } = require("./swarm-bus-script");
+const { SWARM_BUS_SCRIPT, SWARM_RELAY_SCRIPT } = require("./swarm-bus-script");
 
 export interface AddAgentOptions {
   sandboxName: string;
@@ -263,6 +263,36 @@ export async function addAgent(opts: AddAgentOptions): Promise<AgentInstance | n
     }
   } else {
     console.log(`  Swarm bus already running on port ${SWARM_BUS_PORT}`);
+  }
+
+  // ── Step 9c: Start bridge relay (alongside bus) ────────────────
+  // The relay polls the bus and delivers messages to agents via their
+  // native CLI (openclaw agent -m ...). Only start if not already running.
+  const relayPath = "/sandbox/.nemoclaw/swarm/nemoclaw-swarm-relay.py";
+  const relayRunningCheck = sandboxExecCapture(sandboxName,
+    `test -f ${relayPath} && cat /proc/*/cmdline 2>/dev/null | tr '\\0' ' ' | grep 'nemoclaw-swarm-relay' | grep -v grep | grep -q python && echo running || echo stopped`,
+  );
+  if (!relayRunningCheck || !relayRunningCheck.includes("running")) {
+    const relayB64 = Buffer.from(SWARM_RELAY_SCRIPT).toString("base64");
+    sandboxExec(sandboxName, [
+      `printf '%s' '${relayB64}' | base64 -d > ${relayPath}`,
+      `chmod +x ${relayPath}`,
+    ].join(" && "));
+    sandboxExec(sandboxName,
+      `setsid python3 ${relayPath} --bus-url http://127.0.0.1:${SWARM_BUS_PORT} --poll-interval 2 </dev/null > /tmp/swarm-relay.log 2>&1 &`,
+    );
+    sandboxExec(sandboxName, "sleep 2", { suppressOutput: true });
+    const relayStarted = sandboxExecCapture(sandboxName,
+      `cat /proc/*/cmdline 2>/dev/null | tr '\\0' ' ' | grep 'nemoclaw-swarm-relay' | grep -v grep | grep -q python && echo running || echo stopped`,
+    );
+    if (relayStarted && relayStarted.includes("running")) {
+      console.log(`  Bridge relay started`);
+    } else {
+      const relayLog = sandboxExecCapture(sandboxName, `cat /tmp/swarm-relay.log 2>/dev/null | tail -5`);
+      console.log(`  Warning: bridge relay may not have started: ${(relayLog || "no log").trim()}`);
+    }
+  } else {
+    console.log(`  Bridge relay already running`);
   }
 
   // ── Step 10: Start support processes (Hermes-specific) ─────────

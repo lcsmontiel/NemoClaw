@@ -475,6 +475,82 @@ else
   fail "JSONL validation failed: $JSONL_VALID"
 fi
 
+# ── Phase 15: Bridge relay running ───────────────────────────────
+
+section "Phase 15: Bridge relay"
+
+RELAY_PROC=$(bus_exec 'cat /proc/*/cmdline 2>/dev/null | tr "\0" " " | grep "nemoclaw-swarm-relay" | grep -v grep | grep python | head -1')
+
+if [ -n "$RELAY_PROC" ]; then
+  pass "Bridge relay process is running"
+else
+  RELAY_LOG=$(bus_exec 'cat /tmp/swarm-relay.log 2>/dev/null | tail -5')
+  info "Relay log: $RELAY_LOG"
+  fail "Bridge relay process not found"
+fi
+
+# ── Phase 16: Bridge delivery (openclaw-0 → openclaw-1 via relay) ──
+
+section "Phase 16: Bridge delivery"
+
+info "Sending bridge test message: openclaw-0 → openclaw-1"
+bus_exec 'curl -sf -X POST http://127.0.0.1:19100/send -H "Content-Type: application/json" -d "{\"from\":\"openclaw-0\",\"to\":\"openclaw-1\",\"content\":\"Reply with exactly one word: PONG\"}"' >/dev/null
+
+# Wait for relay to pick up, deliver to agent, and post reply (up to 60s)
+info "Waiting for relay delivery + agent response..."
+BRIDGE_OK=false
+for i in $(seq 1 20); do
+  sleep 3
+  MESSAGES=$(bus_exec 'curl -sf http://127.0.0.1:19100/messages')
+  # Look for a reply FROM openclaw-1 (relay posts on behalf of the target agent)
+  REPLY_COUNT=$(echo "$MESSAGES" | python3 -c "
+import json, sys
+data = json.load(sys.stdin)
+msgs = data.get('messages', [])
+replies = [m for m in msgs if m.get('from') == 'openclaw-1' and m.get('to') == 'openclaw-0']
+print(len(replies))
+" 2>/dev/null)
+  if [ -n "$REPLY_COUNT" ] && [ "$REPLY_COUNT" -ge 1 ]; then
+    BRIDGE_OK=true
+    break
+  fi
+  # Check for relay error messages
+  RELAY_ERR=$(echo "$MESSAGES" | python3 -c "
+import json, sys
+data = json.load(sys.stdin)
+msgs = data.get('messages', [])
+errs = [m for m in msgs if m.get('from') == 'swarm-relay']
+print(len(errs))
+" 2>/dev/null)
+  if [ -n "$RELAY_ERR" ] && [ "$RELAY_ERR" -ge 1 ]; then
+    info "Relay posted an error message — checking..."
+    break
+  fi
+  info "  waiting... (${i}/20)"
+done
+
+if [ "$BRIDGE_OK" = "true" ]; then
+  pass "Bridge delivered message and agent replied via bus"
+  REPLY_TEXT=$(echo "$MESSAGES" | python3 -c "
+import json, sys
+data = json.load(sys.stdin)
+msgs = data.get('messages', [])
+replies = [m for m in msgs if m.get('from') == 'openclaw-1' and m.get('to') == 'openclaw-0']
+if replies:
+    print(replies[-1].get('content', '')[:200])
+" 2>/dev/null)
+  info "Agent reply: $REPLY_TEXT"
+  if [ -n "$REPLY_TEXT" ]; then
+    pass "Agent response has content"
+  else
+    fail "Agent response was empty"
+  fi
+else
+  RELAY_LOG=$(bus_exec 'tail -10 /tmp/swarm-relay.log 2>/dev/null')
+  info "Relay log tail: $RELAY_LOG"
+  fail "Bridge delivery did not produce an agent reply within 60s"
+fi
+
 # ── Summary ──────────────────────────────────────────────────────
 
 echo ""
