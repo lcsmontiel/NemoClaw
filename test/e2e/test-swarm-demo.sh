@@ -458,6 +458,47 @@ for msg in conv[:6]:
     print()
 " 2>/dev/null || info "(excerpt unavailable)"
 
+# ── Phase 11: Observe Command ─────────────────────────────────
+
+section "Phase 11: Observe Command"
+
+# Basic observe (dump all messages)
+OBSERVE_OUT=$(nemoclaw "$SANDBOX_NAME" observe 2>&1)
+OBSERVE_LINES=$(echo "$OBSERVE_OUT" | grep -c '——')
+if [ "$OBSERVE_LINES" -ge 2 ]; then
+  pass "nemoclaw observe shows $OBSERVE_LINES message headers"
+else
+  fail "nemoclaw observe output too short ($OBSERVE_LINES headers)"
+  echo "$OBSERVE_OUT" | head -20
+fi
+
+# Observe with --last 2 (should show exactly 2 messages)
+OBSERVE_LAST=$(nemoclaw "$SANDBOX_NAME" observe --last 2 2>&1)
+OBSERVE_LAST_LINES=$(echo "$OBSERVE_LAST" | grep -c '——')
+if [ "$OBSERVE_LAST_LINES" -eq 2 ]; then
+  pass "nemoclaw observe --last 2 shows exactly 2 headers"
+else
+  fail "nemoclaw observe --last 2 shows $OBSERVE_LAST_LINES headers (expected 2)"
+fi
+
+# Observe with --since (future timestamp should yield 0 messages)
+OBSERVE_SINCE=$(nemoclaw "$SANDBOX_NAME" observe --since "2099-01-01T00:00:00Z" 2>&1)
+OBSERVE_SINCE_LINES=$(echo "$OBSERVE_SINCE" | grep -c '——')
+if [ "$OBSERVE_SINCE_LINES" -eq 0 ]; then
+  pass "nemoclaw observe --since future returns no messages"
+else
+  fail "nemoclaw observe --since future returned $OBSERVE_SINCE_LINES headers (expected 0)"
+fi
+
+# Observe --follow with timeout (should print messages then exit on SIGTERM)
+OBSERVE_FOLLOW_OUT=$(timeout 8 nemoclaw "$SANDBOX_NAME" observe --follow --last 1 2>&1 || true)
+if echo "$OBSERVE_FOLLOW_OUT" | grep -q '——'; then
+  pass "nemoclaw observe --follow streams messages"
+else
+  fail "nemoclaw observe --follow produced no output"
+  echo "$OBSERVE_FOLLOW_OUT" | head -10
+fi
+
 # ── Summary ─────────────────────────────────────────────────────
 
 echo ""
