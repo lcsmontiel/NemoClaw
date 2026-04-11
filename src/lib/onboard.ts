@@ -39,7 +39,8 @@ const {
   getProviderSelectionConfig,
   parseGatewayInference,
 } = require("./inference-config");
-const { inferContainerRuntime, isWsl, shouldPatchCoredns } = require("./platform");
+const { detectGatewayBackend, inferContainerRuntime, isWsl, shouldPatchCoredns } = require("./platform");
+const { isOpenshellVmAvailable } = require("./openshell");
 const { resolveOpenshell } = require("./resolve-openshell");
 const {
   prompt,
@@ -102,6 +103,8 @@ const DIM = USE_COLOR ? "\x1b[2m" : "";
 const RESET = USE_COLOR ? "\x1b[0m" : "";
 let OPENSHELL_BIN = null;
 const GATEWAY_NAME = "nemoclaw";
+const VM_PID_FILE = path.join(process.env.HOME || "/tmp", ".nemoclaw", "openshell-vm.pid");
+const VM_LOG_FILE = path.join(process.env.HOME || "/tmp", ".nemoclaw", "openshell-vm.log");
 const BACK_TO_SELECTION = "__NEMOCLAW_BACK_TO_SELECTION__";
 const OPENCLAW_LAUNCH_AGENT_PLIST = "~/Library/LaunchAgents/ai.openclaw.gateway.plist";
 
@@ -1649,6 +1652,14 @@ function sleep(seconds) {
 }
 
 function destroyGateway() {
+  // Check if we're using the VM backend — stop the process instead of Docker cleanup
+  const session = onboardSession.loadSession();
+  if (session?.gatewayBackend === "vm") {
+    stopVmGateway();
+    registry.clearAll();
+    return;
+  }
+
   const destroyResult = runOpenshell(["gateway", "destroy", "-g", GATEWAY_NAME], {
     ignoreError: true,
   });
@@ -2018,8 +2029,133 @@ async function preflight() {
 
 // ── Step 2: Gateway ──────────────────────────────────────────────
 
+// ── VM gateway lifecycle helpers ────────────────────────────────
+
+function writeVmPidFile(pid) {
+  const dir = path.dirname(VM_PID_FILE);
+  fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+  fs.writeFileSync(VM_PID_FILE, String(pid), { mode: 0o600 });
+}
+
+function readVmPid() {
+  try {
+    const raw = fs.readFileSync(VM_PID_FILE, "utf-8").trim();
+    const pid = Number(raw);
+    return Number.isFinite(pid) && pid > 0 ? pid : null;
+  } catch {
+    return null;
+  }
+}
+
+function isVmProcessAlive(pid = readVmPid()) {
+  if (!pid || pid <= 0) return false;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (err) {
+    return err?.code === "EPERM";
+  }
+}
+
+function stopVmGateway() {
+  const pid = readVmPid();
+  if (pid && isVmProcessAlive(pid)) {
+    try {
+      process.kill(pid, "SIGTERM");
+    } catch {
+      /* already dead */
+    }
+    // Give the process a moment to exit
+    for (let i = 0; i < 10; i++) {
+      if (!isVmProcessAlive(pid)) break;
+      sleep(1);
+    }
+    // Force kill if still alive
+    if (isVmProcessAlive(pid)) {
+      try {
+        process.kill(pid, "SIGKILL");
+      } catch {
+        /* already dead */
+      }
+    }
+  }
+  try {
+    fs.unlinkSync(VM_PID_FILE);
+  } catch {
+    /* may not exist */
+  }
+}
+
+function isVmGatewayHealthy() {
+  if (!isVmProcessAlive()) return false;
+  // The gRPC API is identical — openshell status works for both backends
+  const status = runCaptureOpenshell(["status"], { ignoreError: true });
+  return status.includes("Connected");
+}
+
+async function startVmGatewayProcess({ exitOnFailure = true } = {}) {
+  // If a healthy VM gateway is already running, reuse it
+  if (isVmGatewayHealthy()) {
+    console.log("  ✓ Reusing existing VM gateway");
+    process.env.OPENSHELL_GATEWAY = GATEWAY_NAME;
+    return;
+  }
+
+  // Stop any stale VM process
+  stopVmGateway();
+
+  console.log("  Starting openshell-vm gateway...");
+  const logFd = fs.openSync(VM_LOG_FILE, "a");
+  const child = spawn("openshell-vm", [], {
+    cwd: ROOT,
+    env: process.env,
+    stdio: ["ignore", logFd, logFd],
+    detached: true,
+  });
+  child.unref();
+  fs.closeSync(logFd);
+
+  writeVmPidFile(child.pid);
+
+  // Poll for health
+  const healthPollCount = envInt("NEMOCLAW_HEALTH_POLL_COUNT", 15);
+  const healthPollInterval = envInt("NEMOCLAW_HEALTH_POLL_INTERVAL", 2);
+  for (let i = 0; i < healthPollCount; i++) {
+    if (!isVmProcessAlive(child.pid)) {
+      break; // Process died
+    }
+    if (isVmGatewayHealthy()) {
+      console.log("  ✓ VM gateway is healthy");
+      process.env.OPENSHELL_GATEWAY = GATEWAY_NAME;
+      return;
+    }
+    if (i < healthPollCount - 1) sleep(healthPollInterval);
+  }
+
+  // Failed
+  if (exitOnFailure) {
+    console.error("  VM gateway failed to start.");
+    console.error("  Check logs: " + VM_LOG_FILE);
+    process.exit(1);
+  }
+  throw new Error("VM gateway failed to start");
+}
+
 async function startGatewayWithOptions(_gpu, { exitOnFailure = true } = {}) {
   step(2, 8, "Starting OpenShell gateway");
+
+  // Detect which backend to use
+  const backend = detectGatewayBackend({
+    vmAvailable: isOpenshellVmAvailable(),
+    gpuRequested: !!_gpu,
+  });
+
+  // VM backend — delegate to openshell-vm process lifecycle
+  if (backend === "vm") {
+    console.log("  Using VM backend (openshell-vm)");
+    await startVmGatewayProcess({ exitOnFailure });
+    return "vm";
+  }
 
   const gatewayStatus = runCaptureOpenshell(["status"], { ignoreError: true });
   const gwInfo = runCaptureOpenshell(["gateway", "info", "-g", GATEWAY_NAME], {
@@ -2030,7 +2166,7 @@ async function startGatewayWithOptions(_gpu, { exitOnFailure = true } = {}) {
     console.log("  ✓ Reusing existing gateway");
     runOpenshell(["gateway", "select", GATEWAY_NAME], { ignoreError: true });
     process.env.OPENSHELL_GATEWAY = GATEWAY_NAME;
-    return;
+    return "docker";
   }
 
   // When a stale gateway is detected (metadata exists but container is gone,
@@ -2151,6 +2287,7 @@ async function startGatewayWithOptions(_gpu, { exitOnFailure = true } = {}) {
   sleep(5);
   runOpenshell(["gateway", "select", GATEWAY_NAME], { ignoreError: true });
   process.env.OPENSHELL_GATEWAY = GATEWAY_NAME;
+  return "docker";
 }
 
 async function startGateway(_gpu) {
@@ -2175,6 +2312,27 @@ function getGatewayStartEnv() {
 }
 
 async function recoverGatewayRuntime() {
+  // Check session for stored backend preference
+  const session = onboardSession.loadSession();
+  const backend = session?.gatewayBackend || detectGatewayBackend({
+    vmAvailable: isOpenshellVmAvailable(),
+  });
+
+  // VM backend recovery — restart the openshell-vm process
+  if (backend === "vm") {
+    if (isVmGatewayHealthy()) {
+      process.env.OPENSHELL_GATEWAY = GATEWAY_NAME;
+      return true;
+    }
+    try {
+      await startVmGatewayProcess({ exitOnFailure: false });
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  // Docker backend recovery (existing path)
   runOpenshell(["gateway", "select", GATEWAY_NAME], { ignoreError: true });
   let status = runCaptureOpenshell(["status"], { ignoreError: true });
   if (status.includes("Connected") && isSelectedGateway(status)) {
@@ -4482,13 +4640,20 @@ async function onboard(opts = {}) {
       onboardSession.markStepComplete("preflight");
     }
 
+    // VM backend resume — check VM process health instead of Docker gateway state
+    const isVmBackend = session?.gatewayBackend === "vm" || detectGatewayBackend({
+      vmAvailable: isOpenshellVmAvailable(),
+      gpuRequested: !!gpu,
+    }) === "vm";
     const gatewayStatus = runCaptureOpenshell(["status"], { ignoreError: true });
     const gatewayInfo = runCaptureOpenshell(["gateway", "info", "-g", GATEWAY_NAME], {
       ignoreError: true,
     });
     const activeGatewayInfo = runCaptureOpenshell(["gateway", "info"], { ignoreError: true });
     const gatewayReuseState = getGatewayReuseState(gatewayStatus, gatewayInfo, activeGatewayInfo);
-    const canReuseHealthyGateway = gatewayReuseState === "healthy";
+    const canReuseHealthyGateway = isVmBackend
+      ? isVmGatewayHealthy()
+      : gatewayReuseState === "healthy";
     const resumeGateway =
       resume && session?.steps?.gateway?.status === "complete" && canReuseHealthyGateway;
     if (resumeGateway) {
@@ -4509,8 +4674,10 @@ async function onboard(opts = {}) {
         }
       }
       startRecordedStep("gateway");
-      await startGateway(gpu);
-      onboardSession.markStepComplete("gateway");
+      const gatewayBackendUsed = await startGateway(gpu);
+      onboardSession.markStepComplete("gateway", {
+        gatewayBackend: gatewayBackendUsed || "docker",
+      });
     }
 
     let sandboxName = session?.sandboxName || null;
@@ -4792,9 +4959,13 @@ module.exports = {
   parsePolicyPresetEnv,
   pruneStaleSandboxEntry,
   repairRecordedSandbox,
+  isVmGatewayHealthy,
+  isVmProcessAlive,
+  readVmPid,
   recoverGatewayRuntime,
   resolveDashboardForwardTarget,
   startGatewayForRecovery,
+  stopVmGateway,
   runCaptureOpenshell,
   setupInference,
   setupMessagingChannels,

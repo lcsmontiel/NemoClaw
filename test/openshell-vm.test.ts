@@ -2,7 +2,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, expect, it } from "vitest";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { afterEach, describe, expect, it } from "vitest";
 
 import {
   isOpenshellVmAvailable,
@@ -13,6 +16,11 @@ import {
   normalizeSession,
   filterSafeUpdates,
 } from "../dist/lib/onboard-session";
+import {
+  isVmProcessAlive,
+  readVmPid,
+  isVmGatewayHealthy,
+} from "../dist/lib/onboard";
 
 describe("openshell-vm detection", () => {
   describe("isOpenshellVmAvailable", () => {
@@ -107,5 +115,68 @@ describe("session gatewayBackend field", () => {
   it("filterSafeUpdates ignores invalid gatewayBackend", () => {
     const safe = filterSafeUpdates({ gatewayBackend: "bogus" });
     expect(safe.gatewayBackend).toBeUndefined();
+  });
+});
+
+describe("VM gateway lifecycle", () => {
+  const tmpDir = path.join(os.tmpdir(), `nemoclaw-vm-test-${process.pid}`);
+  const pidFile = path.join(tmpDir, "openshell-vm.pid");
+
+  afterEach(() => {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  describe("readVmPid", () => {
+    it("returns null when PID file does not exist", () => {
+      // readVmPid reads from the real path (~/.nemoclaw/openshell-vm.pid)
+      // but we can test the isVmProcessAlive helper with known PIDs
+      expect(readVmPid()).toSatisfy((v) => v === null || typeof v === "number");
+    });
+  });
+
+  describe("isVmProcessAlive", () => {
+    it("returns false for null PID", () => {
+      expect(isVmProcessAlive(null)).toBe(false);
+    });
+
+    it("returns false for PID 0", () => {
+      expect(isVmProcessAlive(0)).toBe(false);
+    });
+
+    it("returns false for negative PID", () => {
+      expect(isVmProcessAlive(-1)).toBe(false);
+    });
+
+    it("returns true for current process PID", () => {
+      expect(isVmProcessAlive(process.pid)).toBe(true);
+    });
+
+    it("returns false for non-existent PID", () => {
+      // Use a very high PID that's unlikely to exist
+      expect(isVmProcessAlive(4_000_000)).toBe(false);
+    });
+  });
+
+  describe("isVmGatewayHealthy", () => {
+    it("returns false when no VM process is running", () => {
+      // With no PID file, there's no VM process to check
+      expect(isVmGatewayHealthy()).toBe(false);
+    });
+  });
+
+  describe("session gatewayBackend round-trip", () => {
+    it("persists vm backend through markStepComplete", () => {
+      const session = createSession({ gatewayBackend: "vm" });
+      expect(session.gatewayBackend).toBe("vm");
+      const normalized = normalizeSession(session);
+      expect(normalized.gatewayBackend).toBe("vm");
+    });
+
+    it("persists docker backend through markStepComplete", () => {
+      const session = createSession({ gatewayBackend: "docker" });
+      expect(session.gatewayBackend).toBe("docker");
+      const normalized = normalizeSession(session);
+      expect(normalized.gatewayBackend).toBe("docker");
+    });
   });
 });

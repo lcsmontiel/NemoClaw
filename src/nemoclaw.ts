@@ -30,7 +30,7 @@ const {
   validateName,
 } = require("./lib/runner");
 const { resolveOpenshell } = require("./lib/resolve-openshell");
-const { startGatewayForRecovery } = require("./lib/onboard");
+const { startGatewayForRecovery, stopVmGateway } = require("./lib/onboard");
 const {
   getCredential,
   deleteCredential,
@@ -127,6 +127,13 @@ function captureOpenshell(args, opts = {}) {
 }
 
 function cleanupGatewayAfterLastSandbox() {
+  // Check session for VM backend — stop the process instead of Docker cleanup
+  const session = onboardSession.loadSession();
+  if (session?.gatewayBackend === "vm") {
+    stopVmGateway();
+    return;
+  }
+
   runOpenshell(["forward", "stop", DASHBOARD_FORWARD_PORT], { ignoreError: true });
   runOpenshell(["gateway", "destroy", "-g", NEMOCLAW_GATEWAY_NAME], { ignoreError: true });
   run(
@@ -511,6 +518,27 @@ function getNamedGatewayLifecycleState() {
 }
 
 async function recoverNamedGatewayRuntime() {
+  // VM backend recovery — delegate to startGatewayForRecovery which is already VM-aware
+  const session = onboardSession.loadSession();
+  if (session?.gatewayBackend === "vm") {
+    const before = getNamedGatewayLifecycleState();
+    if (before.state === "healthy_named") {
+      return { recovered: true, before, after: before, attempted: false };
+    }
+    try {
+      await startGatewayForRecovery();
+    } catch {
+      /* fall through */
+    }
+    const after = getNamedGatewayLifecycleState();
+    if (after.state === "healthy_named") {
+      process.env.OPENSHELL_GATEWAY = "nemoclaw";
+      return { recovered: true, before, after, attempted: true, via: "start" };
+    }
+    return { recovered: false, before, after, attempted: true };
+  }
+
+  // Docker backend recovery (existing path)
   const before = getNamedGatewayLifecycleState();
   if (before.state === "healthy_named") {
     return { recovered: true, before, after: before, attempted: false };
