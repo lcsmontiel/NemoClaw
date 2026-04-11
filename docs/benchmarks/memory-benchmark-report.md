@@ -84,11 +84,49 @@ Average topic content: ~67 tokens.
 3. **Tool call cost:** Even reading 10 topics per session, the typed index uses fewer total tokens at 50+ entries.
 4. **Scalability:** At 10,000 entries, the flat format consumes 668,504 tokens — the typed index uses 272,564 (59.2% less).
 
-## Methodology
+## How the Benchmark Works
 
-- Synthetic entries generated with realistic titles (20 rotating topics) and bodies (~120 chars each).
-- Token count measured with tiktoken cl100k_base encoding (used by GPT-4o / Claude-class models).
-- Tool call overhead estimated at 80 tokens per invocation (request framing + result wrapper).
-- Flat memory: all entries as bullet points in a single MEMORY.md file.
-- Typed index: markdown table in MEMORY.md with topic content in separate files under memory/topics/.
-- All measurements taken inside the NemoClaw sandbox container against real filesystem operations.
+The benchmark runs inside a Podman container using the compiled TypedMemoryProvider against a real filesystem. Token counts come from tiktoken cl100k_base (the same encoding used by GPT-4o and Claude-class models).
+
+For each scale (10, 50, 100, 500, 1K, 5K, 10K entries), the benchmark does:
+
+1. **Generate synthetic entries** — realistic memory content, 3-4 lines each (e.g., "Use VS Code with vim keybindings. Dark mode preferred. Installed extensions: ESLint, Prettier, GitLens..."). Twenty rotating topics across all four types (user, project, feedback, reference).
+
+2. **Measure flat memory** — writes all entries as bullet points in a single MEMORY.md file. Counts tokens with tiktoken. This is what the agent loads into context with the default memory system — everything, every session.
+
+3. **Measure typed index** — writes the same entries via `TypedMemoryProvider`, which creates an index table in MEMORY.md and individual topic files under `memory/topics/`. Counts tokens in the index table only (not the topic files). This is what the agent loads with the typed index — just titles, types, and dates.
+
+4. **Record the savings** — compares flat tokens vs index tokens at this scale.
+
+5. **Clean up and repeat** — deletes the temp directory, moves to the next scale.
+
+6. **Calculate session costs** — for each scale, estimates total tokens the agent uses in a realistic session. This accounts for the fact that the typed index agent doesn't just load the index — it also reads topics on demand, and each read costs tokens (see rationale below).
+
+7. **Find the crossover point** — binary searches for the exact entry count where the typed index becomes smaller than the flat file.
+
+8. **Output the report** — writes the markdown tables, crossover analysis, session costs, and takeaways.
+
+### Session Cost Rationale
+
+The "Total Session Tokens" tables model what actually happens in a session:
+
+**Flat memory:** The agent loads the entire MEMORY.md into context. Total cost = all tokens in the file. There are no tool calls because everything is already in context.
+
+**Typed index:** The agent loads only the index table into context, then reads individual topics on demand using the `nemoclaw_memory_read` tool. Each tool call has overhead:
+
+- The agent sends a tool call request (~30 tokens for the function name, parameters, and framing)
+- The tool executes and returns the topic content
+- The result is wrapped in tool response framing (~50 tokens)
+- Total overhead per read: ~80 tokens (on top of the actual topic content)
+
+So the formula is:
+
+```text
+typed_session_tokens = index_tokens + K × (avg_topic_tokens + 80)
+```
+
+Where K is the number of topics the agent reads in a session. We test K = 0 (agent doesn't read any topics), K = 3 (light usage), K = 5 (moderate), and K = 10 (heavy usage).
+
+**Why this matters:** The typed index saves tokens on context loading but spends tokens on tool calls. At small scale with heavy reads (e.g., 10 entries, K=10), the tool call overhead exceeds the savings — the flat file would have been cheaper. At larger scale (50+ entries), the context savings dominate even under heavy read patterns.
+
+The 80-token overhead is an estimate based on typical OpenAI/Anthropic tool call framing. The exact number varies by model, but the ratios hold.
