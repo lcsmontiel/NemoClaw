@@ -2145,53 +2145,63 @@ async function startVmGatewayProcess({ exitOnFailure = true } = {}) {
     const rootfsDir = prepOutput;
     console.log(`  Rootfs: ${rootfsDir}`);
     const initScript = path.join(rootfsDir, "srv", "openshell-vm-init.sh");
+    // The vm-dev kernel (built 2026-04-09) predates CONFIG_POSIX_MQUEUE
+    // (added 2026-04-10). runc fails mounting mqueue in containers.
+    // Fix: write a standalone runc-wrapper script into the rootfs that
+    // strips mqueue entries from config.json before calling real runc.
+    const shimDir = path.join(rootfsDir, "opt", "nemoclaw");
+    const shimPath = path.join(shimDir, "runc-wrapper.sh");
+    if (!fs.existsSync(shimPath)) {
+      fs.mkdirSync(shimDir, { recursive: true });
+      fs.writeFileSync(shimPath, [
+        "#!/bin/sh",
+        "# Strip mqueue mounts from OCI config.json (kernel lacks CONFIG_POSIX_MQUEUE)",
+        'REAL_RUNC="${REAL_RUNC:-/usr/bin/runc.real}"',
+        'for a in "$@"; do',
+        '  if [ -f "$a/config.json" ]; then',
+        '    sed -i \'/"type": "mqueue"/,/}/d\' "$a/config.json" 2>/dev/null || true',
+        "  fi",
+        "done",
+        'exec "$REAL_RUNC" "$@"',
+        "",
+      ].join("\n"));
+      fs.chmodSync(shimPath, 0o755);
+      console.log("  Wrote runc mqueue wrapper to rootfs");
+    }
+
+    // Patch the init script to swap runc for our wrapper before k3s starts
     if (fs.existsSync(initScript)) {
       const initContent = fs.readFileSync(initScript, "utf-8");
-      if (!initContent.includes("NEMOCLAW_MQUEUE_SHIM")) {
-        // The vm-dev kernel (built 2026-04-09) predates the CONFIG_POSIX_MQUEUE
-        // addition (2026-04-10). runc tries to mount -t mqueue inside each container
-        // namespace and fails with ENODEV. Fix: install a runc wrapper that strips
-        // the mqueue mount from the OCI spec before calling the real runc.
-        const shimBlock = `
-# ── NEMOCLAW_MQUEUE_SHIM: strip mqueue from OCI spec for kernels without CONFIG_POSIX_MQUEUE ──
-_runc_real=$(command -v runc 2>/dev/null || echo /usr/bin/runc)
-if [ -x "$_runc_real" ] && ! mount -t mqueue mqueue /dev/mqueue 2>/dev/null; then
-    ts "kernel lacks mqueue support — installing runc shim"
-    mv "$_runc_real" "$_runc_real.real"
-    cat > "$_runc_real" << 'RUNC_SHIM'
-#!/bin/sh
-# Strip mqueue mounts from OCI config.json (kernel lacks CONFIG_POSIX_MQUEUE)
-for arg in "$@"; do
-    case "$arg" in
-        create) has_create=1 ;;
-    esac
-done
-if [ "$has_create" = "1" ]; then
-    for d in "$@"; do
-        cfg="$d/config.json"
-        [ -f "$cfg" ] && sed -i '/"type": "mqueue"/,/}/d' "$cfg" 2>/dev/null
-    done
-fi
-exec "$(dirname "$0")/runc.real" "$@"
-RUNC_SHIM
-    chmod +x "$_runc_real"
-else
-    rmdir /dev/mqueue 2>/dev/null || umount /dev/mqueue 2>/dev/null; true
-fi
-`;
-        // Insert before the k3s server startup
+      if (!initContent.includes("runc-wrapper")) {
+        const patchLines = [
+          "",
+          "# ── NemoClaw: runc mqueue shim (vm-dev kernel lacks CONFIG_POSIX_MQUEUE) ──",
+          "if ! mount -t mqueue mqueue /tmp/_mq_test 2>/dev/null; then",
+          '  _runc=$(command -v runc 2>/dev/null || echo /usr/bin/runc)',
+          '  if [ -x "$_runc" ] && [ ! -f "${_runc}.real" ]; then',
+          '    cp "$_runc" "${_runc}.real"',
+          '    cp /opt/nemoclaw/runc-wrapper.sh "$_runc"',
+          '    chmod +x "$_runc"',
+          '    export REAL_RUNC="${_runc}.real"',
+          '    ts "mqueue shim: runc wrapped (kernel lacks CONFIG_POSIX_MQUEUE)"',
+          "  fi",
+          "else",
+          "  umount /tmp/_mq_test 2>/dev/null; rmdir /tmp/_mq_test 2>/dev/null; true",
+          "fi",
+          "",
+        ].join("\n");
         const patched = initContent.replace(
           /^(K3S_ARGS=\()/m,
-          shimBlock + "\n$1",
+          patchLines + "$1",
         );
         if (patched !== initContent) {
           fs.writeFileSync(initScript, patched);
-          console.log("  Patched VM init script: installed runc mqueue shim");
+          console.log("  Patched VM init script: runc mqueue shim");
         } else {
-          console.log("  Init script patch: could not find K3S_ARGS insertion point");
+          console.log("  Init script patch: K3S_ARGS insertion point not found");
         }
       } else {
-        console.log("  Init script already has mqueue shim");
+        console.log("  Init script already has runc-wrapper patch");
       }
     } else {
       console.log(`  Init script not found at: ${initScript}`);
