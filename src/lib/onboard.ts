@@ -2769,10 +2769,19 @@ async function createSandbox(
         );
         if (saveResult.status === 0) {
           console.log("  Importing image into VM containerd...");
-          // k3s bundles ctr at /var/lib/rancher/k3s/data/<hash>/bin/ctr,
-          // not in PATH. Use k3s ctr which wraps it, or find it via glob.
+          // Write a simple import script to the rootfs to avoid shell
+          // quoting issues through the openshell-vm exec agent.
+          const importScript = path.join(rootfsDir, "opt", "nemoclaw", "import-image.sh");
+          fs.writeFileSync(importScript, [
+            "#!/bin/sh",
+            'CTR=$(find /var/lib/rancher/k3s/data -name ctr -type f 2>/dev/null | head -1)',
+            'TAR=/opt/nemoclaw/sandbox-image.tar',
+            '[ -x "$CTR" ] && exec "$CTR" -a /run/k3s/containerd/containerd.sock -n k8s.io images import "$TAR"',
+            'exec k3s ctr images import "$TAR"',
+          ].join("\n") + "\n");
+          fs.chmodSync(importScript, 0o755);
           const importResult = run(
-            `openshell-vm --name ${shellQuote(GATEWAY_NAME)} exec -- sh -c 'CTR=$(find /var/lib/rancher/k3s/data -name ctr -type f 2>/dev/null | head -1); [ -x "$CTR" ] && "$CTR" -a /run/k3s/containerd/containerd.sock -n k8s.io images import /opt/nemoclaw/sandbox-image.tar || k3s ctr images import /opt/nemoclaw/sandbox-image.tar'`,
+            `openshell-vm --name ${shellQuote(GATEWAY_NAME)} exec -- /opt/nemoclaw/import-image.sh`,
             { ignoreError: true },
           );
           if (importResult.status === 0) {
