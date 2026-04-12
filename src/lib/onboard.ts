@@ -1687,29 +1687,37 @@ async function ensureNamedCredential(envName, label, helpUrl = null) {
 }
 
 function waitForSandboxReady(sandboxName, attempts = null, delaySeconds = 2) {
-  // VM backend: pods take longer to stabilize (image unpacking, init containers)
+  const sess = onboardSession.loadSession();
+  const isVm = sess?.gatewayBackend === "vm";
   if (attempts === null) {
-    const sess = onboardSession.loadSession();
-    attempts = sess?.gatewayBackend === "vm" ? 30 : 10;
+    // VM backend: pods take longer to stabilize (image unpacking, init containers)
+    attempts = isVm ? 30 : 10;
   }
   for (let i = 0; i < attempts; i += 1) {
-    const podPhase = runCaptureOpenshell(
-      [
-        "doctor",
-        "exec",
-        "--",
-        "kubectl",
-        "-n",
-        "openshell",
-        "get",
-        "pod",
-        sandboxName,
-        "-o",
-        "jsonpath={.status.phase}",
-      ],
-      { ignoreError: true },
-    );
-    if (podPhase === "Running") return true;
+    if (isVm) {
+      // `openshell doctor exec` is Docker-specific (uses docker exec).
+      // Use `sandbox list` which works via gRPC for both backends.
+      const list = runCaptureOpenshell(["sandbox", "list"], { ignoreError: true });
+      if (isSandboxReady(list, sandboxName)) return true;
+    } else {
+      const podPhase = runCaptureOpenshell(
+        [
+          "doctor",
+          "exec",
+          "--",
+          "kubectl",
+          "-n",
+          "openshell",
+          "get",
+          "pod",
+          sandboxName,
+          "-o",
+          "jsonpath={.status.phase}",
+        ],
+        { ignoreError: true },
+      );
+      if (podPhase === "Running") return true;
+    }
     sleep(delaySeconds);
   }
   return false;
