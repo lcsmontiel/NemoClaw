@@ -1,6 +1,8 @@
 # NemoClaw on Kubernetes
-# Uses official installer with Docker-in-Docker for sandbox isolation.
-# Prerequisites: kubectl create namespace nemoclaw
+# Uses openshell-vm (microVM gateway) — no Docker-in-Docker required.
+# Prerequisites:
+#   - kubectl create namespace nemoclaw
+#   - Node must have /dev/kvm (bare-metal or nested virt enabled)
 apiVersion: v1
 kind: Pod
 metadata:
@@ -10,30 +12,10 @@ metadata:
     app: nemoclaw
 spec:
   containers:
-    # Docker daemon (DinD)
-    - name: dind
-      image: docker:24-dind
-      securityContext:
-        privileged: true
-      env:
-        - name: DOCKER_TLS_CERTDIR
-          value: ""
-      command: ["dockerd", "--host=unix:///var/run/docker.sock"]
-      volumeMounts:
-        - name: docker-storage
-          mountPath: /var/lib/docker
-        - name: docker-socket
-          mountPath: /var/run
-        - name: docker-config
-          mountPath: /etc/docker
-      resources:
-        requests:
-          memory: "8Gi"
-          cpu: "2"
-
-    # Workspace - runs official NemoClaw installer
     - name: workspace
       image: node:22
+      securityContext:
+        privileged: true  # required for /dev/kvm access (microVM)
       command:
         - bash
         - -c
@@ -41,36 +23,27 @@ spec:
           set -e
 
           # Install packages
-          echo "[1/4] Installing packages..."
+          echo "[1/3] Installing packages..."
           apt-get update -qq
-          apt-get install -y -qq docker.io socat curl >/dev/null 2>&1
+          apt-get install -y -qq socat curl >/dev/null 2>&1
 
           # Start socat proxy for K8s DNS bridge
-          echo "[2/4] Starting socat proxy..."
+          echo "[2/3] Starting socat proxy..."
           socat TCP-LISTEN:8000,fork,reuseaddr TCP:$DYNAMO_HOST &
-          # Add hosts entry so validation can reach socat via host.openshell.internal
           echo "127.0.0.1 host.openshell.internal" >> /etc/hosts
           sleep 1
 
-          # Wait for Docker
-          echo "[3/4] Waiting for Docker daemon..."
-          for i in $(seq 1 30); do
-            if docker info >/dev/null 2>&1; then break; fi
-            sleep 2
-          done
-          docker info >/dev/null 2>&1 || { echo "Docker not ready"; exit 1; }
-          echo "Docker ready"
-
-          # Run official NemoClaw installer
-          echo "[4/4] Running NemoClaw installer..."
+          # Install openshell-vm (microVM gateway — no Docker needed)
+          echo "[3/3] Installing openshell-vm and running NemoClaw..."
+          curl -fsSL https://raw.githubusercontent.com/NVIDIA/OpenShell/main/install-vm.sh | sh
           curl -fsSL https://nvidia.com/nemoclaw.sh | bash
 
           # Keep running after onboard
           echo "Onboard complete. Container staying alive."
           exec sleep infinity
       env:
-        - name: DOCKER_HOST
-          value: unix:///var/run/docker.sock
+        - name: NEMOCLAW_GATEWAY_BACKEND
+          value: "vm"
         # Dynamo endpoint (raw host:port for socat) - UPDATE THIS FOR YOUR CLUSTER
         - name: DYNAMO_HOST
           value: "vllm-disagg-frontend.dynamo.svc.cluster.local:8000"
@@ -91,31 +64,9 @@ spec:
           value: "skip"
         - name: NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE
           value: "1"
-      volumeMounts:
-        - name: docker-socket
-          mountPath: /var/run
-        - name: docker-config
-          mountPath: /etc/docker
       resources:
         requests:
-          memory: "4Gi"
-          cpu: "2"
-
-  initContainers:
-    # Configure Docker daemon for cgroup v2
-    - name: init-docker-config
-      image: busybox
-      command: ["sh", "-c", "echo '{\"default-cgroupns-mode\":\"host\"}' > /etc/docker/daemon.json"]
-      volumeMounts:
-        - name: docker-config
-          mountPath: /etc/docker
-
-  volumes:
-    - name: docker-storage
-      emptyDir: {}
-    - name: docker-socket
-      emptyDir: {}
-    - name: docker-config
-      emptyDir: {}
+          memory: "8Gi"
+          cpu: "4"
 
   restartPolicy: Never
