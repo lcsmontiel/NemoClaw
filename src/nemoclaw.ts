@@ -521,8 +521,12 @@ async function recoverNamedGatewayRuntime() {
   // VM backend recovery — delegate to startGatewayForRecovery which is already VM-aware
   const session = onboardSession.loadSession();
   if (session?.gatewayBackend === "vm") {
+    // openshell-vm registers as "openshell-vm-nemoclaw", not "nemoclaw"
+    const vmGatewayName = `openshell-vm-${NEMOCLAW_GATEWAY_NAME}`;
+    runOpenshell(["gateway", "select", vmGatewayName], { ignoreError: true });
     const before = getNamedGatewayLifecycleState();
     if (before.state === "healthy_named") {
+      process.env.OPENSHELL_GATEWAY = vmGatewayName;
       return { recovered: true, before, after: before, attempted: false };
     }
     try {
@@ -530,9 +534,10 @@ async function recoverNamedGatewayRuntime() {
     } catch {
       /* fall through */
     }
+    runOpenshell(["gateway", "select", vmGatewayName], { ignoreError: true });
     const after = getNamedGatewayLifecycleState();
     if (after.state === "healthy_named") {
-      process.env.OPENSHELL_GATEWAY = "nemoclaw";
+      process.env.OPENSHELL_GATEWAY = vmGatewayName;
       return { recovered: true, before, after, attempted: true, via: "start" };
     }
     return { recovered: false, before, after, attempted: true };

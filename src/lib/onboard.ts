@@ -105,6 +105,8 @@ let OPENSHELL_BIN = null;
 const GATEWAY_NAME = "nemoclaw";
 const VM_PID_FILE = path.join(process.env.HOME || "/tmp", ".nemoclaw", "openshell-vm.pid");
 const VM_LOG_FILE = path.join(process.env.HOME || "/tmp", ".nemoclaw", "openshell-vm.log");
+// openshell-vm prefixes instance names: gateway_name("nemoclaw") → "openshell-vm-nemoclaw"
+const VM_GATEWAY_NAME = `openshell-vm-${GATEWAY_NAME}`;
 const BACK_TO_SELECTION = "__NEMOCLAW_BACK_TO_SELECTION__";
 const OPENCLAW_LAUNCH_AGENT_PLIST = "~/Library/LaunchAgents/ai.openclaw.gateway.plist";
 
@@ -2088,7 +2090,9 @@ function stopVmGateway() {
 
 function isVmGatewayHealthy() {
   if (!isVmProcessAlive()) return false;
-  // The gRPC API is identical — openshell status works for both backends
+  // openshell-vm registers itself under "openshell-vm-nemoclaw", not "nemoclaw".
+  // Use -g to target the correct gateway metadata.
+  runOpenshell(["gateway", "select", VM_GATEWAY_NAME], { ignoreError: true });
   const status = runCaptureOpenshell(["status"], { ignoreError: true });
   return status.includes("Connected");
 }
@@ -2097,7 +2101,7 @@ async function startVmGatewayProcess({ exitOnFailure = true } = {}) {
   // If a healthy VM gateway is already running, reuse it
   if (isVmGatewayHealthy()) {
     console.log("  ✓ Reusing existing VM gateway");
-    process.env.OPENSHELL_GATEWAY = GATEWAY_NAME;
+    process.env.OPENSHELL_GATEWAY = VM_GATEWAY_NAME;
     return;
   }
 
@@ -2105,8 +2109,13 @@ async function startVmGatewayProcess({ exitOnFailure = true } = {}) {
   stopVmGateway();
 
   console.log("  Starting openshell-vm gateway...");
+  const dir = path.dirname(VM_LOG_FILE);
+  fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
   const logFd = fs.openSync(VM_LOG_FILE, "a");
-  const child = spawn("openshell-vm", [], {
+  // openshell-vm --name nemoclaw: boots a microVM with gateway identity
+  // "openshell-vm-nemoclaw". The binary handles rootfs extraction, k3s
+  // bootstrap, mTLS cert generation, and metadata registration internally.
+  const child = spawn("openshell-vm", ["--name", GATEWAY_NAME], {
     cwd: ROOT,
     env: process.env,
     stdio: ["ignore", logFd, logFd],
@@ -2117,25 +2126,33 @@ async function startVmGatewayProcess({ exitOnFailure = true } = {}) {
 
   writeVmPidFile(child.pid);
 
-  // Poll for health
-  const healthPollCount = envInt("NEMOCLAW_HEALTH_POLL_COUNT", 15);
-  const healthPollInterval = envInt("NEMOCLAW_HEALTH_POLL_INTERVAL", 2);
+  // openshell-vm boots k3s inside a microVM and runs its own bootstrap
+  // (PKI generation, helm install, health check). This takes significantly
+  // longer than Docker gateway start — up to ~120s on first boot.
+  // The binary itself polls gRPC health for 90s internally, so our outer
+  // poll should exceed that to avoid racing against the inner check.
+  const healthPollCount = envInt("NEMOCLAW_HEALTH_POLL_COUNT", 60);
+  const healthPollInterval = envInt("NEMOCLAW_HEALTH_POLL_INTERVAL", 3);
   for (let i = 0; i < healthPollCount; i++) {
     if (!isVmProcessAlive(child.pid)) {
       break; // Process died
     }
     if (isVmGatewayHealthy()) {
       console.log("  ✓ VM gateway is healthy");
-      process.env.OPENSHELL_GATEWAY = GATEWAY_NAME;
+      process.env.OPENSHELL_GATEWAY = VM_GATEWAY_NAME;
       return;
     }
     if (i < healthPollCount - 1) sleep(healthPollInterval);
   }
 
-  // Failed
+  // Failed — show tail of log for diagnostics
   if (exitOnFailure) {
     console.error("  VM gateway failed to start.");
     console.error("  Check logs: " + VM_LOG_FILE);
+    try {
+      const tail = fs.readFileSync(VM_LOG_FILE, "utf-8").split("\n").slice(-10).join("\n");
+      if (tail.trim()) console.error("  Last log lines:\n" + tail);
+    } catch { /* best effort */ }
     process.exit(1);
   }
   throw new Error("VM gateway failed to start");
@@ -2321,7 +2338,7 @@ async function recoverGatewayRuntime() {
   // VM backend recovery — restart the openshell-vm process
   if (backend === "vm") {
     if (isVmGatewayHealthy()) {
-      process.env.OPENSHELL_GATEWAY = GATEWAY_NAME;
+      process.env.OPENSHELL_GATEWAY = VM_GATEWAY_NAME;
       return true;
     }
     try {
