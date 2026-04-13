@@ -39,6 +39,8 @@ MIN_VERSION="0.0.24"
 # Maximum version validated for this NemoClaw release. Newer OpenShell builds
 # may change sandbox semantics; upgrade NemoClaw before upgrading past this.
 MAX_VERSION="0.0.26"
+# Pin fresh installs to this version instead of pulling "latest".
+PIN_VERSION="$MAX_VERSION"
 
 version_gte() {
   # Returns 0 (true) if $1 >= $2 — portable, no sort -V (BSD compat)
@@ -88,16 +90,16 @@ trap 'rm -rf "$tmpdir"' EXIT
 
 CHECKSUM_FILE="openshell-checksums-sha256.txt"
 download_with_curl() {
-  curl -fsSL "https://github.com/NVIDIA/OpenShell/releases/latest/download/$ASSET" \
+  curl -fsSL "https://github.com/NVIDIA/OpenShell/releases/download/v${PIN_VERSION}/$ASSET" \
     -o "$tmpdir/$ASSET"
-  curl -fsSL "https://github.com/NVIDIA/OpenShell/releases/latest/download/$CHECKSUM_FILE" \
+  curl -fsSL "https://github.com/NVIDIA/OpenShell/releases/download/v${PIN_VERSION}/$CHECKSUM_FILE" \
     -o "$tmpdir/$CHECKSUM_FILE"
 }
 
 if command -v gh >/dev/null 2>&1; then
-  if GH_PROMPT_DISABLED=1 GH_TOKEN="${GH_TOKEN:-${GITHUB_TOKEN:-}}" gh release download --repo NVIDIA/OpenShell \
+  if GH_PROMPT_DISABLED=1 GH_TOKEN="${GH_TOKEN:-${GITHUB_TOKEN:-}}" gh release download "v${PIN_VERSION}" --repo NVIDIA/OpenShell \
     --pattern "$ASSET" --dir "$tmpdir" 2>/dev/null \
-    && GH_PROMPT_DISABLED=1 GH_TOKEN="${GH_TOKEN:-${GITHUB_TOKEN:-}}" gh release download --repo NVIDIA/OpenShell \
+    && GH_PROMPT_DISABLED=1 GH_TOKEN="${GH_TOKEN:-${GITHUB_TOKEN:-}}" gh release download "v${PIN_VERSION}" --repo NVIDIA/OpenShell \
       --pattern "$CHECKSUM_FILE" --dir "$tmpdir" 2>/dev/null; then
     : # gh succeeded
   else
