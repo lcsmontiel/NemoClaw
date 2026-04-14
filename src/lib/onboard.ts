@@ -5289,6 +5289,7 @@ async function onboard(opts = {}) {
         startRecordedStep,
         skippedStepMessage,
       });
+      onboardSession.markStepSkipped("openclaw");
     } else {
       const resumeOpenclaw = resume && sandboxName && isOpenclawReady(sandboxName);
       if (resumeOpenclaw) {
@@ -5299,6 +5300,7 @@ async function onboard(opts = {}) {
         await setupOpenclaw(sandboxName, model, provider);
         onboardSession.markStepComplete("openclaw", { sandboxName, provider, model });
       }
+      onboardSession.markStepSkipped("agent_setup");
     }
 
     const recordedPolicyPresets = Array.isArray(session?.policyPresets)

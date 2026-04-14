@@ -1995,6 +1995,18 @@ const { setupInference } = require(${onboardPath});
     assert.match(source, /const result = runOpenshell\(args, runOpts\)/);
   });
 
+  it("marks the unused agent_setup/openclaw sibling step as skipped (#1834)", () => {
+    const source = fs.readFileSync(
+      path.join(import.meta.dirname, "..", "src", "lib", "onboard.ts"),
+      "utf-8",
+    );
+
+    // When agent path is taken, openclaw must be marked skipped.
+    assert.match(source, /handleAgentSetup[\s\S]*?markStepSkipped\("openclaw"\)/);
+    // When default openclaw path is taken, agent_setup must be marked skipped.
+    assert.match(source, /setupOpenclaw[\s\S]*?markStepSkipped\("agent_setup"\)/);
+  });
+
   it("starts the sandbox step before prompting for the sandbox name", () => {
     const source = fs.readFileSync(
       path.join(import.meta.dirname, "..", "src", "lib", "onboard.ts"),
