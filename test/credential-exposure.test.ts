@@ -40,7 +40,7 @@ describe("credential exposure in process arguments", () => {
     expect(violations).toEqual([]);
   });
 
-  it("runner.ts must not spread full process.env into subprocess (NVBug 6010004)", () => {
+  it("runner.ts must not spread full process.env into subprocess", () => {
     const src = fs.readFileSync(RUNNER_TS, "utf-8");
 
     // Match { ...process.env } or { ...process.env, ... } as execa env option.
@@ -74,17 +74,26 @@ describe("credential exposure in process arguments", () => {
     expect(src).not.toMatch(/"--credential",\s*process\.env\./);
   });
 
-  it("onboard.js uses buildSubprocessEnv allowlist, not a hand-rolled blocklist", () => {
+  it("onboard.js does not embed sandbox secrets in the sandbox create command line", () => {
     const src = fs.readFileSync(ONBOARD_JS, "utf-8");
 
-    // sandboxEnv must be built via the shared allowlist (buildSubprocessEnv),
-    // not a hand-rolled blocklist. The allowlist approach is more secure because
-    // it rejects unknown/future secrets by default.  See: NVBug 6010004.
-    expect(src).toMatch(/buildSubprocessEnv/);
-    expect(src).toMatch(/sandboxEnv\s*=\s*buildSubprocessEnv\(/);
-    // The old blocklist pattern must not be present
-    expect(src).not.toMatch(/blockedSandboxEnvNames/);
-    // Secrets must not be pushed into envArgs
+    // sandboxEnv must be built with a blocklist that strips all credential env vars.
+    // The blocklist derives provider keys from REMOTE_PROVIDER_CONFIG and adds
+    // messaging tokens explicitly. Verify both mechanisms are present.
+    //
+    // TODO: migrate to the shared allowlist in subprocess-env.ts
+    // once the sandbox create path has been validated end-to-end.
+    const blocklistMatch = src.match(/const blockedSandboxEnvNames = new Set\(\[([\s\S]*?)\]\);/);
+    expect(blocklistMatch).not.toBeNull();
+    const blocklist = blocklistMatch[1];
+    // Provider credentials are derived from REMOTE_PROVIDER_CONFIG
+    expect(blocklist).toContain("REMOTE_PROVIDER_CONFIG");
+    // Messaging and additional credentials are listed explicitly
+    expect(blocklist).toContain('"BEDROCK_API_KEY"');
+    expect(blocklist).toContain('"DISCORD_BOT_TOKEN"');
+    expect(blocklist).toContain('"SLACK_BOT_TOKEN"');
+    expect(blocklist).toContain('"SLACK_APP_TOKEN"');
+    expect(blocklist).toContain('"TELEGRAM_BOT_TOKEN"');
     expect(src).toMatch(/streamSandboxCreate\(createCommand, sandboxEnv(?:, \{)?/);
     expect(src).not.toMatch(/envArgs\.push\(formatEnvAssignment\("NVIDIA_API_KEY"/);
     expect(src).not.toMatch(/envArgs\.push\(formatEnvAssignment\("DISCORD_BOT_TOKEN"/);

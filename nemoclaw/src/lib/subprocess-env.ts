@@ -12,7 +12,7 @@
  * Credentials needed by a subprocess are injected explicitly via the
  * `extra` parameter.
  *
- * See: NVBug 6010004
+ * See: #1874
  *
  * NOTE: src/lib/subprocess-env.ts is a mirror of this file for the CLI
  * project. Keep them in sync.

@@ -430,7 +430,7 @@ describe("runner", () => {
       expect(providerCall[1]).not.toContain("--credential");
     });
 
-    it("does not leak parent secrets into subprocess env (NVBug 6010004)", async () => {
+    it("does not leak parent secrets into subprocess env", async () => {
       process.env.MY_API_KEY = "secret-key-123";
       process.env.GITHUB_TOKEN = "ghp_leaked";
       process.env.AWS_ACCESS_KEY_ID = "AKIA_leaked";
