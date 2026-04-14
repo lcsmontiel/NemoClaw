@@ -430,6 +430,40 @@ describe("runner", () => {
       expect(providerCall[1]).not.toContain("--credential");
     });
 
+    it("does not leak parent secrets into subprocess env (NVBug 6010004)", async () => {
+      process.env.MY_API_KEY = "secret-key-123";
+      process.env.GITHUB_TOKEN = "ghp_leaked";
+      process.env.AWS_ACCESS_KEY_ID = "AKIA_leaked";
+      process.env.NVIDIA_API_KEY = "nvapi-leaked";
+      try {
+        await actionApply("default", minimalBlueprint());
+
+        const providerCall = mockExeca.mock.calls.find(
+          (c) => Array.isArray(c[1]) && c[1].includes("provider"),
+        );
+        if (!providerCall) throw new Error("provider create call not found");
+        const subEnv = providerCall[2].env;
+
+        // The explicitly injected credential must be present
+        expect(subEnv.OPENAI_API_KEY).toBe("secret-key-123");
+
+        // Secrets from the parent process must NOT be present
+        expect(subEnv).not.toHaveProperty("GITHUB_TOKEN");
+        expect(subEnv).not.toHaveProperty("AWS_ACCESS_KEY_ID");
+        expect(subEnv).not.toHaveProperty("NVIDIA_API_KEY");
+        expect(subEnv).not.toHaveProperty("MY_API_KEY");
+
+        // Allowed system vars should still be present
+        expect(subEnv).toHaveProperty("PATH");
+        expect(subEnv).toHaveProperty("HOME");
+      } finally {
+        delete process.env.MY_API_KEY;
+        delete process.env.GITHUB_TOKEN;
+        delete process.env.AWS_ACCESS_KEY_ID;
+        delete process.env.NVIDIA_API_KEY;
+      }
+    });
+
     it("falls back to credential_default when env var is unset", async () => {
       const bp = {
         components: {

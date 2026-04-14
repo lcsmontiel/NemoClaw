@@ -23,6 +23,44 @@ import YAML from "yaml";
 import { validateEndpointUrl } from "./ssrf.js";
 import { DASHBOARD_PORT } from "../lib/ports.js";
 
+// ── Subprocess environment allowlist ───────────────────────────
+// Only these env vars (or prefixes) are forwarded to subprocesses
+// spawned by the runner.  Everything else — including secrets like
+// NVIDIA_API_KEY, GITHUB_TOKEN, AWS_ACCESS_KEY_ID — is stripped.
+// Credentials needed by the subprocess are injected explicitly via
+// the `credEnv` overlay.  See: NVBug 6010004.
+
+const ALLOWED_ENV_NAMES = new Set([
+  "HOME",
+  "USER",
+  "LOGNAME",
+  "SHELL",
+  "PATH",
+  "TERM",
+  "TMPDIR",
+  "TMP",
+  "TEMP",
+  "LANG",
+  "NODE_ENV",
+  "HOSTNAME",
+]);
+
+const ALLOWED_ENV_PREFIXES = ["LC_", "XDG_"];
+
+function buildSubprocessEnv(extra?: Record<string, string>): Record<string, string> {
+  const env: Record<string, string> = {};
+  for (const [key, value] of Object.entries(process.env)) {
+    if (value === undefined) continue;
+    if (ALLOWED_ENV_NAMES.has(key) || ALLOWED_ENV_PREFIXES.some((p) => key.startsWith(p))) {
+      env[key] = value;
+    }
+  }
+  if (extra) {
+    Object.assign(env, extra);
+  }
+  return env;
+}
+
 type Action = "plan" | "apply" | "status" | "rollback";
 
 // ── Logging helpers ─────────────────────────────────────────────
@@ -294,7 +332,7 @@ export async function actionApply(
     reject: false,
     stdout: "pipe",
     stderr: "pipe",
-    env: { ...process.env, ...credEnv },
+    env: buildSubprocessEnv(credEnv),
   });
 
   progress(70, "Setting inference route");

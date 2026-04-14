@@ -39,6 +39,18 @@ describe("credential exposure in process arguments", () => {
     expect(violations).toEqual([]);
   });
 
+  it("runner.ts must not spread full process.env into subprocess (NVBug 6010004)", () => {
+    const src = fs.readFileSync(RUNNER_TS, "utf-8");
+
+    // Match { ...process.env } or { ...process.env, ... } as execa env option.
+    // The runner must use buildSubprocessEnv() with an allowlist instead.
+    const spreadRe = /env:\s*\{[^}]*\.\.\.process\.env/;
+    const violations = src.split("\n").filter(
+      (line) => spreadRe.test(line) && !line.trimStart().startsWith("//"),
+    );
+    expect(violations).toEqual([]);
+  });
+
   it("runner.ts must not pass KEY=VALUE to --credential", () => {
     const src = fs.readFileSync(RUNNER_TS, "utf-8");
     const lines = src.split("\n");
