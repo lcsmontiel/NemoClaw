@@ -95,7 +95,9 @@ BLUEPRINT_BAK="${BLUEPRINT}.bak"
 # Dockerfile.base validates OPENCLAW_VERSION >= min_openclaw_version.
 # Temporarily lower the minimum so the old version builds.
 cp "${BLUEPRINT}" "${BLUEPRINT_BAK}"
-sed -i "s/min_openclaw_version:.*/min_openclaw_version: \"${OLD_OPENCLAW_VERSION}\"/" "${BLUEPRINT}"
+# sed -i behaves differently on macOS vs Linux; use a temp file for portability
+sed "s/min_openclaw_version:.*/min_openclaw_version: \"${OLD_OPENCLAW_VERSION}\"/" "${BLUEPRINT}" >"${BLUEPRINT}.tmp"
+mv "${BLUEPRINT}.tmp" "${BLUEPRINT}"
 
 docker build \
   --build-arg "OPENCLAW_VERSION=${OLD_OPENCLAW_VERSION}" \

@@ -1577,9 +1577,11 @@ async function sandboxRebuild(sandboxName, args = []) {
   console.log("  Creating new sandbox with current image...");
 
   // Force the sandbox name so onboard recreates with the same name.
-  // Update the session to point at this sandbox and set env var as fallback.
+  // Mark session resumable and point at this sandbox; set env var as fallback.
   onboardSession.updateSession((s) => {
     s.sandboxName = sandboxName;
+    s.resumable = true;
+    s.status = "in_progress";
     return s;
   });
   process.env.NEMOCLAW_SANDBOX_NAME = sandboxName;
