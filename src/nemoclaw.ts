@@ -1306,7 +1306,7 @@ async function sandboxSkillInstall(sandboxName, args = []) {
     process.exit(1);
   }
   if (collected.skippedDotfiles.length > 0) {
-    console.log(`  ${D}Skipping ${collected.skippedDotfiles.length} dotfile(s): ${collected.skippedDotfiles.join(", ")}${R}`);
+    console.log(`  ${D}Skipping ${collected.skippedDotfiles.length} hidden path(s): ${collected.skippedDotfiles.join(", ")}${R}`);
   }
   const fileLabel = collected.files.length === 1 ? "1 file" : `${collected.files.length} files`;
   console.log(`  ${G}✓${R} Validated SKILL.md (name: ${frontmatter.name}, ${fileLabel})`);
