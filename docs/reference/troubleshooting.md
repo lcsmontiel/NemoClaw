@@ -125,6 +125,16 @@ $ export PATH=~/.npm-global/bin:$PATH
 
 Add the `export` line to your `~/.bashrc` or `~/.zshrc` to make it permanent, then re-run the installer.
 
+### Installer fails on NVIDIA Jetson
+
+The installer auto-detects NVIDIA Jetson devices (Orin and Thor) and applies required host configuration before the normal install flow.
+If the Jetson setup step fails, verify that you have `sudo` access and that Docker is installed and running.
+
+For JetPack 6 (L4T 36.x), the setup switches iptables to legacy mode and adjusts the Docker daemon configuration.
+For JetPack 7 (L4T 38.x / Thor), only bridge netfilter and sysctl settings are applied.
+
+If the L4T version is not recognized, the setup step is skipped and the installer continues normally.
+
 ### Port already in use
 
 The NemoClaw gateway uses port `18789` by default.
@@ -363,6 +373,20 @@ In that case:
 - verify the sandbox was created with the Discord provider attached
 - inspect gateway logs and blocked requests with `openshell term`
 - treat the failure as a native Discord gateway problem, not as a bridge startup problem
+
+### Landlock filesystem restrictions silently degraded
+
+After sandbox creation, NemoClaw checks whether the host kernel supports Landlock (Linux 5.13+).
+If the kernel is too old or you are running on macOS (where the Docker VM kernel may lack Landlock), a warning prints:
+
+```text
+⚠ Landlock: Docker VM kernel <version> does not support Landlock (requires ≥5.13).
+  Sandbox filesystem restrictions will silently degrade (best_effort mode).
+```
+
+This warning is informational and does not block sandbox creation.
+The sandbox runs without kernel-level filesystem restrictions, relying on container mount configuration instead.
+For full filesystem enforcement, run on a Linux kernel 5.13 or later (Ubuntu 22.04 LTS and later include Landlock support).
 
 ### Sandbox lost after gateway restart
 
