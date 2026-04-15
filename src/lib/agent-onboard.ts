@@ -10,7 +10,7 @@ import os from "os";
 import path from "path";
 import { spawnSync } from "child_process";
 
-import { ROOT, run, shellQuote } from "./runner";
+import { ROOT, run } from "./runner";
 import { loadAgent, resolveAgentName, type AgentDefinition } from "./agent-defs";
 import { getProviderSelectionConfig } from "./inference-config";
 import * as onboardSession from "./onboard-session";
@@ -55,13 +55,14 @@ export function createAgentSandbox(agent: AgentDefinition): {
 
   if (baseDockerfile) {
     const baseImageTag = `ghcr.io/nvidia/nemoclaw/${agent.name}-sandbox-base:latest`;
-    const inspectResult = run(`docker image inspect ${shellQuote(baseImageTag)} >/dev/null 2>&1`, {
-      ignoreError: true,
-    });
+    const inspectResult = run(
+      ["docker", "image", "inspect", baseImageTag],
+      { ignoreError: true, suppressOutput: true },
+    );
     if (inspectResult.status !== 0) {
       console.log(`  Building ${agent.displayName} base image (first time only)...`);
       run(
-        `docker build -f ${shellQuote(baseDockerfile)} -t ${shellQuote(baseImageTag)} ${shellQuote(ROOT)}`,
+        ["docker", "build", "-f", baseDockerfile, "-t", baseImageTag, ROOT],
         { stdio: ["ignore", "inherit", "inherit"] },
       );
       console.log(`  \u2713 Base image built: ${baseImageTag}`);
@@ -156,9 +157,11 @@ export async function handleAgentSetup(
     const script = buildSandboxConfigSyncScript(sandboxConfig);
     const scriptFile = writeSandboxConfigSyncFile(script);
     try {
+      const openshellBin = process.env.NEMOCLAW_OPENSHELL_BIN || "openshell";
+      const scriptContent = fs.readFileSync(scriptFile, "utf-8");
       run(
-        `${openshellShellCommand(["sandbox", "connect", sandboxName])} < ${shellQuote(scriptFile)}`,
-        { stdio: ["ignore", "ignore", "inherit"] },
+        [openshellBin, "sandbox", "connect", sandboxName],
+        { stdio: ["pipe", "ignore", "inherit"], input: scriptContent },
       );
     } finally {
       cleanupTempDir(scriptFile, "nemoclaw-sync");
