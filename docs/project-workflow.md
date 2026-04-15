@@ -89,7 +89,7 @@ For feature requests, apply `enhancement` (Tier 1) plus one of:
 ### Tier 3 — Dimension (apply when platform-, integration-, or provider-specific)
 
 **Platforms:**
-`Platform: DGX Spark` · `Platform: MacOS` · `Platform: Ubuntu` · `Platform: Brev` · `Platform: Windows/WSL` · `Platform: ARM64` · `Platform: AGX Thor/Orin` · `Platform: Fedora`
+`Platform: DGX Spark` · `Platform: macOS` · `Platform: Ubuntu` · `Platform: Brev` · `Platform: Windows/WSL` · `Platform: ARM64` · `Platform: AGX Thor/Orin` · `Platform: Fedora`
 
 **Integrations:**
 `Integration: Telegram` · `Integration: Slack` · `Integration: Discord` · `Integration: GitHub` · `Integration: OpenClaw` · `Integration: WhatsApp` · `Integration: IRC` · `Integration: Brave` · `Integration: Feishu` · `Integration: Outlook`
@@ -103,7 +103,7 @@ For feature requests, apply `enhancement` (Tier 1) plus one of:
 |---|---|
 | Add Slack bridge support | `enhancement` + `enhancement: feature` + `Integration: Slack` |
 | Support NVIDIA NIM inference provider | `enhancement` + `enhancement: inference` + `Provider: NVIDIA` |
-| Fix macOS install failure | `bug` + `Platform: MacOS` |
+| Fix macOS install failure | `bug` + `Platform: macOS` |
 | GPU flag for `nemoclaw onboard` | `enhancement` + `enhancement: ui` |
 | Audio transcription routing through gateway | `enhancement` + `enhancement: inference` |
 

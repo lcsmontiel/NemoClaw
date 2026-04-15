@@ -73,7 +73,7 @@ Comment on the closed PR before you merge:
 
 **Project status:** `No Status` (do NOT say "added to backlog" — that implies approval)
 
-**Labels:** Always apply `enhancement` + the most specific sub-label (`enhancement: inference`, `enhancement: ui`, etc.) + any Tier 3 dimension labels (`Integration: Slack`, `Platform: MacOS`, `Provider: NVIDIA`, etc.)
+**Labels:** Always apply `enhancement` + the most specific sub-label (`enhancement: inference`, `enhancement: ui`, etc.) + any Tier 3 dimension labels (`Integration: Slack`, `Platform: macOS`, `Provider: NVIDIA`, etc.)
 
 *Full label reference: [docs/project-workflow.md](project-workflow.md)*
 

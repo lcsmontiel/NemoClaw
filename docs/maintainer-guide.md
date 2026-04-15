@@ -153,7 +153,7 @@ Feature requests are not rejections — they're routing decisions. Route to the 
 
 1. Always apply `enhancement` as the base label
 2. Add the most specific Tier 2 sub-label: `enhancement: inference`, `enhancement: ui`, `enhancement: security`, etc.
-3. Add Tier 3 dimension labels if platform-, integration-, or provider-specific: `Platform: MacOS`, `Integration: Slack`, `Provider: NVIDIA`, etc.
+3. Add Tier 3 dimension labels if platform-, integration-, or provider-specific: `Platform: macOS`, `Integration: Slack`, `Provider: NVIDIA`, etc.
 
 **Rules:**
 
