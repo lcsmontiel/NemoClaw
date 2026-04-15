@@ -1,4 +1,3 @@
-// @ts-nocheck
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 //
@@ -9,54 +8,18 @@
 // mutations are handled by `nemoclaw config set` (Phase 2).
 
 const { runCapture, validateName, shellQuote } = require("./runner");
-
-// ---------------------------------------------------------------------------
-// Credential stripping (inline for CJS compat — canonical copy in
-// credential-strip.ts for the plugin ESM side)
-// ---------------------------------------------------------------------------
-
-const CREDENTIAL_FIELDS = new Set([
-  "apiKey",
-  "api_key",
-  "token",
-  "secret",
-  "password",
-  "resolvedKey",
-]);
-
-const CREDENTIAL_FIELD_PATTERN =
-  /(?:access|refresh|client|bearer|auth|api|private|public|signing|session)(?:Token|Key|Secret|Password)$/;
-
-function isCredentialField(key) {
-  return CREDENTIAL_FIELDS.has(key) || CREDENTIAL_FIELD_PATTERN.test(key);
-}
-
-function stripCredentials(obj) {
-  if (obj === null || obj === undefined) return obj;
-  if (typeof obj !== "object") return obj;
-  if (Array.isArray(obj)) return obj.map(stripCredentials);
-
-  const result = {};
-  for (const [key, value] of Object.entries(obj)) {
-    if (isCredentialField(key)) {
-      result[key] = "[REDACTED]";
-    } else {
-      result[key] = stripCredentials(value);
-    }
-  }
-  return result;
-}
+const { stripCredentials } = require("./credential-filter");
 
 // ---------------------------------------------------------------------------
 // Dotpath extraction
 // ---------------------------------------------------------------------------
 
-function extractDotpath(obj, dotpath) {
+function extractDotpath(obj: unknown, dotpath: string): unknown {
   const keys = dotpath.split(".");
-  let current = obj;
+  let current: unknown = obj;
   for (const key of keys) {
     if (current == null || typeof current !== "object") return undefined;
-    current = current[key];
+    current = (current as Record<string, unknown>)[key];
   }
   return current;
 }
@@ -65,19 +28,24 @@ function extractDotpath(obj, dotpath) {
 // config get
 // ---------------------------------------------------------------------------
 
-function getOpenshellCommand() {
+function getOpenshellCommand(): string {
   const binary = process.env.NEMOCLAW_OPENSHELL_BIN;
   if (!binary) return "openshell";
   return shellQuote(binary);
 }
 
-function configGet(sandboxName, opts = {}) {
+interface ConfigGetOpts {
+  key?: string | null;
+  format?: string;
+}
+
+function configGet(sandboxName: string, opts: ConfigGetOpts = {}): void {
   validateName(sandboxName, "sandbox name");
 
   const openshell = getOpenshellCommand();
   const cmd = `${openshell} sandbox exec ${shellQuote(sandboxName)} cat /sandbox/.openclaw/openclaw.json 2>/dev/null`;
 
-  let raw;
+  let raw: string;
   try {
     raw = runCapture(cmd, { ignoreError: true });
   } catch {
@@ -89,11 +57,12 @@ function configGet(sandboxName, opts = {}) {
     process.exit(1);
   }
 
-  let config;
+  let config: unknown;
   try {
     config = JSON.parse(raw);
-  } catch (err) {
-    console.error(`  Failed to parse sandbox config: ${err.message}`);
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.error(`  Failed to parse sandbox config: ${message}`);
     process.exit(1);
   }
 
@@ -101,7 +70,9 @@ function configGet(sandboxName, opts = {}) {
   config = stripCredentials(config);
 
   // Remove gateway section (contains auth tokens — per migration-state.ts pattern)
-  delete config.gateway;
+  if (config && typeof config === "object" && !Array.isArray(config)) {
+    delete (config as Record<string, unknown>).gateway;
+  }
 
   // Extract dotpath if specified
   if (opts.key) {
@@ -128,4 +99,4 @@ function configGet(sandboxName, opts = {}) {
 // Exports
 // ---------------------------------------------------------------------------
 
-export { configGet, stripCredentials, extractDotpath };
+export { configGet, extractDotpath };

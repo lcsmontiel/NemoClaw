@@ -1,4 +1,3 @@
-// @ts-nocheck
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 //
@@ -18,52 +17,14 @@ const {
   parseCurrentPolicy,
   PERMISSIVE_POLICY_PATH,
 } = require("./policies");
+const { parseDuration, MAX_SECONDS, DEFAULT_SECONDS } = require("./duration");
+const { appendAuditEntry } = require("./shields-audit");
 
 const STATE_DIR = path.join(process.env.HOME ?? "/tmp", ".nemoclaw", "state");
 
-// ---------------------------------------------------------------------------
-// Duration parsing (inline to avoid cross-module import complexity in CJS)
-// ---------------------------------------------------------------------------
-
-const MAX_TIMEOUT_SECONDS = 1800; // 30 minutes — security invariant
-const DEFAULT_TIMEOUT_SECONDS = 300; // 5 minutes
-const DURATION_RE = /^(\d+)\s*(s|m|h)?$/i;
-const MULTIPLIERS = { s: 1, m: 60, h: 3600 };
-
-function parseDuration(input) {
-  const trimmed = (input || "").trim();
-  if (!trimmed) return DEFAULT_TIMEOUT_SECONDS;
-
-  const match = DURATION_RE.exec(trimmed);
-  if (!match) {
-    throw new Error(
-      `Invalid duration "${trimmed}". Use a number with optional suffix: 300, 5m, 30m`,
-    );
-  }
-
-  const value = Number(match[1]);
-  const unit = (match[2] ?? "s").toLowerCase();
-  const seconds = value * (MULTIPLIERS[unit] ?? 1);
-
-  if (seconds <= 0) throw new Error("Duration must be greater than zero");
-  if (seconds > MAX_TIMEOUT_SECONDS) {
-    throw new Error(
-      `Duration ${seconds}s exceeds maximum of ${MAX_TIMEOUT_SECONDS}s (${MAX_TIMEOUT_SECONDS / 60} minutes)`,
-    );
-  }
-  return seconds;
-}
-
-// ---------------------------------------------------------------------------
-// Audit logging (inline for CJS compatibility)
-// ---------------------------------------------------------------------------
-
-const AUDIT_FILE = path.join(STATE_DIR, "shields-audit.jsonl");
-
-function appendAudit(entry) {
-  fs.mkdirSync(STATE_DIR, { recursive: true, mode: 0o700 });
-  fs.appendFileSync(AUDIT_FILE, JSON.stringify(entry) + "\n", { mode: 0o600 });
-}
+// Re-export for tests and external consumers
+const MAX_TIMEOUT_SECONDS = MAX_SECONDS;
+const DEFAULT_TIMEOUT_SECONDS = DEFAULT_SECONDS;
 
 // ---------------------------------------------------------------------------
 // State helpers — read/write shields state from ~/.nemoclaw/state/nemoclaw.json
@@ -71,18 +32,28 @@ function appendAudit(entry) {
 
 const STATE_FILE = path.join(STATE_DIR, "nemoclaw.json");
 
-function loadShieldsState() {
+interface ShieldsState {
+  shieldsDown?: boolean;
+  shieldsDownAt?: string | null;
+  shieldsDownTimeout?: number | null;
+  shieldsDownReason?: string | null;
+  shieldsDownPolicy?: string | null;
+  shieldsPolicySnapshotPath?: string | null;
+  updatedAt?: string;
+}
+
+function loadShieldsState(): ShieldsState {
   if (!fs.existsSync(STATE_FILE)) return {};
   try {
-    return JSON.parse(fs.readFileSync(STATE_FILE, "utf-8"));
+    return JSON.parse(fs.readFileSync(STATE_FILE, "utf-8")) as ShieldsState;
   } catch {
     return {};
   }
 }
 
-function saveShieldsState(patch) {
+function saveShieldsState(patch: ShieldsState): ShieldsState {
   const current = loadShieldsState();
-  const updated = { ...current, ...patch, updatedAt: new Date().toISOString() };
+  const updated: ShieldsState = { ...current, ...patch, updatedAt: new Date().toISOString() };
   fs.mkdirSync(STATE_DIR, { recursive: true, mode: 0o700 });
   fs.writeFileSync(STATE_FILE, JSON.stringify(updated, null, 2), { mode: 0o600 });
   return updated;
@@ -92,21 +63,28 @@ function saveShieldsState(patch) {
 // Timer marker — tracks the detached auto-restore process
 // ---------------------------------------------------------------------------
 
-function timerMarkerPath(sandboxName) {
+interface TimerMarker {
+  pid: number;
+  sandboxName: string;
+  snapshotPath: string;
+  restoreAt: string;
+}
+
+function timerMarkerPath(sandboxName: string): string {
   return path.join(STATE_DIR, `shields-timer-${sandboxName}.json`);
 }
 
-function readTimerMarker(sandboxName) {
+function readTimerMarker(sandboxName: string): TimerMarker | null {
   const p = timerMarkerPath(sandboxName);
   if (!fs.existsSync(p)) return null;
   try {
-    return JSON.parse(fs.readFileSync(p, "utf-8"));
+    return JSON.parse(fs.readFileSync(p, "utf-8")) as TimerMarker;
   } catch {
     return null;
   }
 }
 
-function killTimer(sandboxName) {
+function killTimer(sandboxName: string): void {
   const marker = readTimerMarker(sandboxName);
   if (!marker) return;
   try {
@@ -125,7 +103,13 @@ function killTimer(sandboxName) {
 // shields down
 // ---------------------------------------------------------------------------
 
-function shieldsDown(sandboxName, opts = {}) {
+interface ShieldsDownOpts {
+  timeout?: string | null;
+  reason?: string | null;
+  policy?: string;
+}
+
+function shieldsDown(sandboxName: string, opts: ShieldsDownOpts = {}): void {
   validateName(sandboxName, "sandbox name");
 
   const state = loadShieldsState();
@@ -143,7 +127,7 @@ function shieldsDown(sandboxName, opts = {}) {
 
   // 1. Capture current policy snapshot
   console.log("  Capturing current policy snapshot...");
-  let rawPolicy;
+  let rawPolicy: string;
   try {
     rawPolicy = runCapture(buildPolicyGetCommand(sandboxName), { ignoreError: true });
   } catch {
@@ -162,7 +146,7 @@ function shieldsDown(sandboxName, opts = {}) {
   console.log(`  Saved: ${snapshotPath}`);
 
   // 2. Determine and apply relaxed policy
-  let policyFile;
+  let policyFile: string;
   if (policyName === "permissive") {
     policyFile = PERMISSIVE_POLICY_PATH;
   } else if (fs.existsSync(policyName)) {
@@ -211,18 +195,19 @@ function shieldsDown(sandboxName, opts = {}) {
       }),
       { mode: 0o600 },
     );
-  } catch (err) {
-    console.error(`  Warning: Could not start auto-restore timer: ${err.message}`);
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.error(`  Warning: Could not start auto-restore timer: ${message}`);
     console.error("  You MUST manually run `nemoclaw shields up` when done.");
   }
 
   // 5. Audit log
-  appendAudit({
+  appendAuditEntry({
     action: "shields_down",
     sandbox: sandboxName,
     timestamp: now,
     timeout_seconds: timeoutSeconds,
-    reason,
+    reason: reason ?? undefined,
     policy_applied: policyName,
     policy_snapshot: snapshotPath,
   });
@@ -240,7 +225,7 @@ function shieldsDown(sandboxName, opts = {}) {
 // shields up
 // ---------------------------------------------------------------------------
 
-function shieldsUp(sandboxName) {
+function shieldsUp(sandboxName: string): void {
   validateName(sandboxName, "sandbox name");
 
   const state = loadShieldsState();
@@ -279,14 +264,14 @@ function shieldsUp(sandboxName) {
   });
 
   // 5. Audit log
-  appendAudit({
+  appendAuditEntry({
     action: "shields_up",
     sandbox: sandboxName,
     timestamp: now.toISOString(),
     restored_by: "operator",
     duration_seconds: durationSeconds,
     policy_snapshot: snapshotPath,
-    reason: state.shieldsDownReason,
+    reason: state.shieldsDownReason ?? undefined,
   });
 
   // 6. Output
@@ -300,7 +285,7 @@ function shieldsUp(sandboxName) {
 // shields status
 // ---------------------------------------------------------------------------
 
-function shieldsStatus(sandboxName) {
+function shieldsStatus(sandboxName: string): void {
   validateName(sandboxName, "sandbox name");
 
   const state = loadShieldsState();
