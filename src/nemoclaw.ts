@@ -515,6 +515,7 @@ function getNamedGatewayLifecycleState() {
   return { state: "missing_named", status: status.output, gatewayInfo: gatewayInfo.output };
 }
 
+/** Attempt to recover the named NemoClaw gateway after a restart or connectivity loss. */
 async function recoverNamedGatewayRuntime() {
   const before = getNamedGatewayLifecycleState();
   if (before.state === "healthy_named") {
@@ -550,10 +551,45 @@ async function recoverNamedGatewayRuntime() {
   return { recovered: false, before, after, attempted: true };
 }
 
+/** Query sandbox presence and return its output with the live enforced policy. */
 function getSandboxGatewayState(sandboxName) {
   const result = captureOpenshell(["sandbox", "get", sandboxName]);
-  const output = result.output;
+  let output = result.output;
   if (result.status === 0) {
+    // `openshell sandbox get` returns the immutable baseline policy from sandbox
+    // creation, which does not include network_policies added later via
+    // `openshell policy set`. Replace the Policy section with the live policy
+    // from `policy get --full`, preserving the colored "Policy:" header and
+    // Sandbox info above it. (#1132)
+    const livePolicy = captureOpenshell(["policy", "get", "--full", sandboxName], {
+      ignoreError: true,
+    });
+    if (livePolicy.status === 0 && livePolicy.output.trim()) {
+      const rawLines = String(output).split("\n");
+      const cleanLines = stripAnsi(String(output)).split("\n");
+      const policyLineIdx = cleanLines.findIndex((l) => l.trim() === "Policy:");
+      if (policyLineIdx !== -1) {
+        // Keep everything before Policy (Sandbox info with colors),
+        // plus the original colored "Policy:" header line.
+        const before = rawLines.slice(0, policyLineIdx + 1).join("\n");
+        // Extract YAML content from policy get --full (skip metadata header before "---").
+        // Use a regex to handle varying line endings (\n, \r\n) and optional trailing whitespace.
+        const delimIdx = livePolicy.output.search(/^---\s*$/m);
+        const yamlPart = delimIdx !== -1
+          ? livePolicy.output.slice(delimIdx).replace(/^---\s*[\r\n]+/, "")
+          : livePolicy.output;
+        // Guard: only replace if the extracted content looks like policy YAML
+        // (starts with a YAML key like "version:" or "network_policies:").
+        // Avoids replacing with warnings or status text from unexpected output.
+        const trimmedYaml = yamlPart.trim();
+        const looksLikeError = /^(error|failed|invalid|warning|status)\b/i.test(trimmedYaml);
+        if (trimmedYaml && !looksLikeError && /^[a-z_][a-z0-9_]*\s*:/m.test(trimmedYaml)) {
+          // Add 2-space indent to match the original sandbox get output format.
+          const indented = trimmedYaml.split("\n").map((l) => (l ? "  " + l : l)).join("\n");
+          output = before + "\n\n" + indented + "\n";
+        }
+      }
+    }
     return { state: "present", output };
   }
   if (/\bNotFound\b|\bNot Found\b|sandbox not found/i.test(output)) {
@@ -569,6 +605,7 @@ function getSandboxGatewayState(sandboxName) {
   return { state: "unknown_error", output };
 }
 
+/** Print troubleshooting hints based on gateway lifecycle state in the output. */
 function printGatewayLifecycleHint(output = "", sandboxName = "", writer = console.error) {
   const cleanOutput = stripAnsi(output);
   if (/No gateway configured/i.test(cleanOutput)) {
@@ -862,8 +899,24 @@ function stop() {
 
 function debug(args) {
   const { runDebug } = require("./lib/debug");
+  const getDefaultSandbox = (): string | undefined => {
+    const { defaultSandbox, sandboxes } = registry.listSandboxes();
+    if (!defaultSandbox) return undefined;
+    if (!sandboxes.find((s) => s.name === defaultSandbox)) {
+      console.error(`${_RD}Warning:${R} default sandbox '${defaultSandbox}' is no longer in the registry.`);
+      console.error(`  Use ${B}--sandbox NAME${R} to target a specific sandbox, or run ${B}nemoclaw onboard${R} again.\n`);
+      return undefined;
+    }
+    const liveList = captureOpenshell(["sandbox", "list"], { ignoreError: true });
+    if (liveList.status === 0 && !parseLiveSandboxNames(liveList.output).has(defaultSandbox)) {
+      console.error(`${_RD}Warning:${R} default sandbox '${defaultSandbox}' exists in the local registry but not in OpenShell.`);
+      console.error(`  Use ${B}--sandbox NAME${R} to target a specific sandbox, or run ${B}nemoclaw onboard${R} again.\n`);
+      return undefined;
+    }
+    return defaultSandbox;
+  };
   runDebugCommand(args, {
-    getDefaultSandbox: () => registry.listSandboxes().defaultSandbox || undefined,
+    getDefaultSandbox,
     runDebug,
     log: console.log,
     error: console.error,
@@ -1402,6 +1455,35 @@ async function sandboxSkillInstall(sandboxName, args = []) {
   }
 }
 
+async function sandboxPolicyRemove(sandboxName, args = []) {
+  const dryRun = args.includes("--dry-run");
+  const allPresets = policies.listPresets();
+  const applied = policies.getAppliedPresets(sandboxName);
+
+  const answer = await policies.selectForRemoval(allPresets, { applied });
+  if (!answer) return;
+
+  const presetContent = policies.loadPreset(answer);
+  if (!presetContent) return;
+
+  const endpoints = policies.getPresetEndpoints(presetContent);
+  if (endpoints.length > 0) {
+    console.log(`  Endpoints that would be removed: ${endpoints.join(", ")}`);
+  }
+
+  if (dryRun) {
+    console.log("  --dry-run: no changes applied.");
+    return;
+  }
+
+  const confirm = await askPrompt(`  Remove '${answer}' from sandbox '${sandboxName}'? [Y/n]: `);
+  if (confirm.toLowerCase() === "n") return;
+
+  if (!policies.removePreset(sandboxName, answer)) {
+    process.exit(1);
+  }
+}
+
 function cleanupSandboxServices(sandboxName, { stopHostServices = false } = {}) {
   if (stopHostServices) {
     const { stopAll } = require("./lib/services");
@@ -1840,6 +1922,7 @@ function help() {
 
   ${G}Policy Presets:${R}
     nemoclaw <name> policy-add       Add a network or filesystem policy preset ${D}(--dry-run to preview)${R}
+    nemoclaw <name> policy-remove    Remove an applied policy preset ${D}(--dry-run to preview)${R}
     nemoclaw <name> policy-list      List presets ${D}(● = applied)${R}
 
   ${G}Compatibility Commands:${R}
@@ -1853,7 +1936,8 @@ function help() {
     nemoclaw status                  Show sandbox list and service status
 
   Troubleshooting:
-    nemoclaw debug [--quick]         Collect diagnostics for bug reports
+    nemoclaw debug [--quick] [--sandbox NAME]
+                                     Collect diagnostics for bug reports
     nemoclaw debug --output FILE     Save diagnostics tarball for GitHub issues
 
   ${G}Credentials:${R}
@@ -1968,6 +2052,9 @@ const [cmd, ...args] = process.argv.slice(2);
       case "policy-add":
         await sandboxPolicyAdd(cmd, actionArgs);
         break;
+      case "policy-remove":
+        await sandboxPolicyRemove(cmd, actionArgs);
+        break;
       case "policy-list":
         sandboxPolicyList(cmd);
         break;
@@ -1985,7 +2072,7 @@ const [cmd, ...args] = process.argv.slice(2);
         break;
       default:
         console.error(`  Unknown action: ${action}`);
-        console.error(`  Valid actions: connect, status, logs, policy-add, policy-list, skill, snapshot, rebuild, destroy`);
+        console.error(`  Valid actions: connect, status, logs, policy-add, policy-remove, policy-list, skill, snapshot, rebuild, destroy`);
         process.exit(1);
     }
     return;
