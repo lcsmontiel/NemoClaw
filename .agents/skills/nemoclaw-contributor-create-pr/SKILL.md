@@ -145,7 +145,7 @@ Follow these rules when filling in the template:
 - **Changes:** Bullet list of key changes. Be specific — reference file names, commands, or behaviors that changed.
 - **Type of Change:** Check exactly one box. Use `[x]` for checked, `[ ]` for unchecked.
 - **Verification:** Check only the boxes for steps you actually ran and confirmed passing. Do not check boxes for steps you skipped or did not verify.
-- **AI Disclosure:** Always check this box and name the tool you are (e.g., "Claude Code", "Cursor"). Do not remove this section.
+- **AI Disclosure:** As an AI agent, always check this box and name yourself (e.g., "Claude Code", "Cursor"). Do not remove this section. (Note: Human contributors may remove this section if the PR is fully human-authored.)
 - **DCO Sign-Off:** Replace `{name}` and `{email}` with values from `git config user.name` and `git config user.email`.
 
 ## Step 6: Create the PR
