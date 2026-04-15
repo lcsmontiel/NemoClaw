@@ -573,9 +573,15 @@ function getSandboxGatewayState(sandboxName) {
         const yamlPart = delimIdx !== -1
           ? livePolicy.output.slice(delimIdx).replace(/^---\s*[\r\n]+/, "")
           : livePolicy.output;
-        // Add 2-space indent to match the original sandbox get output format.
-        const indented = yamlPart.trimEnd().split("\n").map((l) => (l ? "  " + l : l)).join("\n");
-        output = before + "\n\n" + indented + "\n";
+        // Guard: only replace if the extracted content looks like policy YAML
+        // (starts with a YAML key like "version:" or "network_policies:").
+        // Avoids replacing with warnings or status text from unexpected output.
+        const trimmedYaml = yamlPart.trim();
+        if (trimmedYaml && /^[a-z_][a-z0-9_]*\s*:/m.test(trimmedYaml)) {
+          // Add 2-space indent to match the original sandbox get output format.
+          const indented = trimmedYaml.split("\n").map((l) => (l ? "  " + l : l)).join("\n");
+          output = before + "\n\n" + indented + "\n";
+        }
       }
     }
     return { state: "present", output };
