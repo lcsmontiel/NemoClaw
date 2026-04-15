@@ -63,6 +63,7 @@ State the recommended action and **project status** clearly before drafting. The
 | Action | When |
 |---|---|
 | `comment` | Post a reply, leave open (triage ack, needs-info first contact, redirect to Discussions) |
+| `warning` | Day-7 reminder on needs-info or needs-rebase items — post friendly heads-up, do NOT close |
 | `close` | Close with comment |
 | `request changes` | PR needs revision — post comment, leave open |
 | `comment + label` | Post comment AND apply a label (e.g., rebase nudge → apply `status: rebase`) |

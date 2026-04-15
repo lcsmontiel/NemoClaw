@@ -112,8 +112,8 @@ These are team commitments, not aspirational targets.
 
 | Situation | Target |
 |---|---|
-| New issue from external contributor | First response within 5 business days |
-| PR with no review | First comment within 7 business days |
+| New issue from external contributor | First response within 3 business days |
+| PR with no review | First comment within 5 business days |
 | Contributor asks for an update | Respond within 3 business days |
 | Security report via <psirt@nvidia.com> | Handled by PSIRT — not in scope here |
 
@@ -202,15 +202,21 @@ Use when an issue is valid and understood but not yet scheduled. This is an ackn
 
 ## 9. Needs Info — Labeling and Closing
 
-Two distinct situations require different responses.
+Three-stage flow — label, warn, close.
 
-**Situation 1 — Issue needs info from the contributor (first contact):**
+**Situation 1 — First contact (day 0):**
 
-> Thanks for the report. To move forward, we need a bit more information: [specific ask — e.g., reproduction steps, NemoClaw version, output of `nemoclaw status`]. We'll keep this open for 7 days — if we don't hear back, we'll close it to keep the tracker tidy. Feel free to reopen or file a new issue once you have the details.
+> Thanks for the report. To move forward, we need a bit more information: [specific ask — e.g., reproduction steps, NemoClaw version, output of `nemoclaw status`]. We'll keep this open for 14 days — feel free to reopen or file a new issue once you have the details.
 
 **Action:** Add label `status: needs-info`, post comment, leave open.
 
-**Situation 2 — Issue already labeled `status: needs-info`, 7+ days with no response:**
+**Situation 2 — 7 days, no response (warning):**
+
+> Just a heads-up — we haven't heard back yet on the information we requested. If this is still affecting you, please share [repeat specific ask] and we'll keep the investigation going. We'll close this in 7 days if we don't hear back.
+
+**Action:** Post comment only — do not close yet.
+
+**Situation 3 — 14 days total, still no response (close):**
 
 > Closing due to no response — we weren't able to get the information needed to investigate. If this is still happening, please open a new issue and include [repeat the specific ask]. Happy to take another look.
 
@@ -219,8 +225,28 @@ Two distinct situations require different responses.
 **Rules:**
 
 - Always name the specific information you need. "More details" wastes everyone's time.
-- The 7-day window starts from when the label is applied, not when the issue was opened.
-- Don't close Situation 1 in the same response — label first, give the contributor the window.
+- The window starts from when the label is applied, not when the issue was opened.
+- Don't close at day 7 — warn first, close at day 14.
+
+---
+
+## 9a. Needs Rebase — Warning and Close
+
+Same three-stage flow applies to PRs labeled `status: rebase`.
+
+**Stage 1 — Rebase nudge (day 0):** Post rebase comment, apply `status: rebase`. *(See § 5 in SKILL.md for template.)*
+
+**Stage 2 — 7 days, no rebase (warning):**
+
+> Just a heads-up — this PR still needs a rebase before we can review it. If you're planning to update it, please rebase against `main` within the next 7 days. Happy to help if you run into conflicts.
+
+**Action:** Post comment only — do not close yet.
+
+**Stage 3 — 14 days total, no rebase (close):**
+
+> Closing due to inactivity — the PR needed a rebase and we didn't hear back. If you'd like to continue, please open a new PR rebased against the current `main`. We'd be glad to review it.
+
+**Action:** `close + comment`.
 
 ---
 

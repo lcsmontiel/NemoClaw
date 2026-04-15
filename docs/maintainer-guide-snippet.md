@@ -93,13 +93,29 @@ Comment on the closed PR before you merge:
 
 ## Needs Info
 
-**First contact** — label `status: needs-info`, leave open:
+**Day 0 — first contact:** label `status: needs-info`, leave open:
 
-> Thanks for the report. To move forward, we need: [specific ask]. We'll keep this open for 7 days — if we don't hear back, we'll close it to keep the tracker tidy.
+> Thanks for the report. To move forward, we need: [specific ask]. We'll keep this open for 14 days.
 
-**7+ days, no response** — close + comment:
+**Day 7 — warning** (no response yet):
+
+> Just a heads-up — we haven't heard back yet. If this is still affecting you, please share [repeat specific ask]. We'll close this in 7 days if we don't hear back.
+
+**Day 14 — close:**
 
 > Closing due to no response. If this is still happening, please open a new issue and include [repeat the specific ask]. Happy to take another look.
+
+## Needs Rebase
+
+**Day 0 — rebase nudge:** apply `status: rebase`, post comment asking to rebase.
+
+**Day 7 — warning** (no rebase yet):
+
+> Just a heads-up — this PR still needs a rebase. Please rebase against `main` within the next 7 days.
+
+**Day 14 — close:**
+
+> Closing due to inactivity — please open a new PR rebased against `main` if you'd like to continue.
 
 ---
 
@@ -107,8 +123,8 @@ Comment on the closed PR before you merge:
 
 | Situation | Target |
 |---|---|
-| New issue | First response ≤ 5 business days |
-| Open PR, no review | First comment ≤ 7 business days |
+| New issue | First response < 3 business days |
+| Open PR, no review | First comment < 5 business days |
 | Contributor asks for update | Reply ≤ 3 business days |
 
 If you'll miss a window — post an update before it lapses.
