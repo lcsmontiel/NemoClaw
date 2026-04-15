@@ -73,10 +73,10 @@ Avoid `openshell self-update`, `npm update -g openshell`, `openshell gateway sta
 :::
 
 The installer detects existing sandbox sessions before onboarding and prints a warning if any are found.
-To make the installer abort instead of continuing, set `NEMOCLAW_PROTECT_SESSIONS=1`:
+To make the installer abort instead of continuing, set `NEMOCLAW_SINGLE_SESSION=1`:
 
 ```console
-$ NEMOCLAW_PROTECT_SESSIONS=1 curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash
+$ NEMOCLAW_SINGLE_SESSION=1 curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash
 ```
 
 The wizard prompts for a provider first, then collects the provider credential if needed.

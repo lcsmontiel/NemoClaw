@@ -292,7 +292,7 @@ usage() {
   printf "    NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1 Same as --yes-i-accept-third-party-software\n"
   printf "    NEMOCLAW_NON_INTERACTIVE=1    Same as --non-interactive\n"
   printf "    NEMOCLAW_SANDBOX_NAME         Sandbox name to create/use\n"
-  printf "    NEMOCLAW_PROTECT_SESSIONS=1   Abort if active sandbox sessions exist\n"
+  printf "    NEMOCLAW_SINGLE_SESSION=1     Abort if active sandbox sessions exist\n"
   printf "    NEMOCLAW_RECREATE_SANDBOX=1   Recreate an existing sandbox\n"
   printf "    NEMOCLAW_INSTALL_TAG         Git ref to install (default: latest release)\n"
   printf "    NEMOCLAW_PROVIDER             cloud | ollama | nim | vllm\n"
@@ -1204,14 +1204,22 @@ main() {
 
   step 3 "Onboarding"
   if command_exists nemoclaw; then
-    if ! nemoclaw list 2>&1 | grep -q "No sandboxes registered"; then
-      warn "Active sandbox sessions detected. Onboarding may disrupt running agents."
-      if [[ "${NEMOCLAW_PROTECT_SESSIONS:-}" == "1" ]]; then
-        error "Aborting — NEMOCLAW_PROTECT_SESSIONS is set. Destroy existing sessions with 'nemoclaw <name> destroy' before reinstalling."
-        exit 1
+    if [[ -f "${HOME}/.nemoclaw/sandboxes.json" ]] && node -e '
+      const fs = require("fs");
+      try {
+        const data = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
+        const count = Object.keys(data.sandboxes || {}).length;
+        process.exit(count > 0 ? 0 : 1);
+      } catch {
+        process.exit(1);
+      }
+    ' "${HOME}/.nemoclaw/sandboxes.json"; then
+      warn "Existing sandbox sessions detected. Onboarding may disrupt running agents."
+      if [[ "${NEMOCLAW_SINGLE_SESSION:-}" == "1" ]]; then
+        error "Aborting — NEMOCLAW_SINGLE_SESSION is set. Destroy existing sessions with 'nemoclaw <name> destroy' before reinstalling."
       fi
       warn "Consider destroying existing sessions with 'nemoclaw <name> destroy' first."
-      warn "Set NEMOCLAW_PROTECT_SESSIONS=1 to abort the installer when sessions are active."
+      warn "Set NEMOCLAW_SINGLE_SESSION=1 to abort the installer when sessions are active."
     fi
     if run_installer_host_preflight; then
       run_onboard
