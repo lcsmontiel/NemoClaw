@@ -28,6 +28,7 @@ filesystem_policy:
   read_write:
     - /tmp
     - /dev/null
+    - /sandbox/.openclaw          # Config dir — writable during shields-down
     - /sandbox/.openclaw-data
     - /sandbox/.nemoclaw
 

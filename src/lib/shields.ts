@@ -19,6 +19,7 @@ const {
 } = require("./policies");
 const { parseDuration, MAX_SECONDS, DEFAULT_SECONDS } = require("./duration");
 const { appendAuditEntry } = require("./shields-audit");
+const { resolveAgentConfig } = require("./sandbox-config");
 
 const STATE_DIR = path.join(process.env.HOME ?? "/tmp", ".nemoclaw", "state");
 
@@ -159,6 +160,21 @@ function shieldsDown(sandboxName: string, opts: ShieldsDownOpts = {}): void {
   console.log(`  Applying ${policyName} policy...`);
   run(buildPolicySetCommand(policyFile, sandboxName));
 
+  // 2b. Make config file writable inside the sandbox.
+  //     The Dockerfile bakes root:root 444 on the config file and 755 on
+  //     the config dir. The permissive Landlock policy adds the config dir
+  //     to read_write, but UNIX permissions still block the sandbox user.
+  //     chmod via openshell exec runs as root, so it can change them.
+  const target = resolveAgentConfig(sandboxName);
+  console.log(`  Unlocking ${target.agentName} config (${target.configPath})...`);
+  const openshell = process.env.NEMOCLAW_OPENSHELL_BIN || "openshell";
+  try {
+    run(`${openshell} sandbox exec ${sandboxName} chmod 777 ${target.configDir}`, { ignoreError: true });
+    run(`${openshell} sandbox exec ${sandboxName} chmod 666 ${target.configPath}`, { ignoreError: true });
+  } catch {
+    console.error("  Warning: Could not unlock config file. Config may remain read-only.");
+  }
+
   // 3. Update state
   const now = new Date().toISOString();
   saveShieldsState({
@@ -247,6 +263,21 @@ function shieldsUp(sandboxName: string): void {
   // 2. Restore policy from snapshot
   console.log("  Restoring policy from snapshot...");
   run(buildPolicySetCommand(snapshotPath, sandboxName));
+
+  // 2b. Re-lock config file to read-only.
+  //     Restore the Dockerfile's original permissions: dir 755, file 444.
+  const target = resolveAgentConfig(sandboxName);
+  console.log(`  Locking ${target.agentName} config (${target.configPath})...`);
+  const openshell = process.env.NEMOCLAW_OPENSHELL_BIN || "openshell";
+  try {
+    run(`${openshell} sandbox exec ${sandboxName} chmod 444 ${target.configPath}`, { ignoreError: true });
+    run(`${openshell} sandbox exec ${sandboxName} chown root:root ${target.configPath}`, { ignoreError: true });
+    run(`${openshell} sandbox exec ${sandboxName} chmod 755 ${target.configDir}`, { ignoreError: true });
+    run(`${openshell} sandbox exec ${sandboxName} chown root:root ${target.configDir}`, { ignoreError: true });
+  } catch {
+    console.error("  Warning: Could not re-lock config file. Run manually:");
+    console.error(`    openshell sandbox exec ${sandboxName} chmod 444 ${target.configPath}`);
+  }
 
   // 3. Calculate duration
   const downAt = state.shieldsDownAt ? new Date(state.shieldsDownAt) : new Date();

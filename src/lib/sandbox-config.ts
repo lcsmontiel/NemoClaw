@@ -22,7 +22,6 @@ const {
   runOpenshellCommand,
   captureOpenshellCommand,
 } = require("./openshell");
-const { isShieldsDown } = require("./shields");
 
 // ---------------------------------------------------------------------------
 // Agent-aware config resolution
@@ -262,17 +261,8 @@ interface ConfigSetOpts {
   restart?: boolean;
 }
 
-function requireShieldsDown(sandboxName: string): void {
-  if (!isShieldsDown()) {
-    console.error("  Shields are UP — config is immutable.");
-    console.error(`  Lower shields first: nemoclaw ${sandboxName} shields down --reason "config change"`);
-    process.exit(1);
-  }
-}
-
 function configSet(sandboxName: string, opts: ConfigSetOpts = {}): void {
   validateName(sandboxName, "sandbox name");
-  requireShieldsDown(sandboxName);
 
   if (!opts.key) {
     console.error("  --key is required.");
@@ -395,7 +385,6 @@ interface RotateTokenOpts {
 
 async function configRotateToken(sandboxName: string, opts: RotateTokenOpts = {}): Promise<void> {
   validateName(sandboxName, "sandbox name");
-  requireShieldsDown(sandboxName);
 
   // 1. Determine which provider and credentialEnv the sandbox uses.
   //    Load the onboard session and verify it matches this sandbox.

@@ -20,10 +20,13 @@ filesystem_policy:
     - /app
     - /etc
     - /var/log
-    - /sandbox/.hermes
+    # Note: /sandbox/.hermes is intentionally NOT read_only here.
+    # The permissive policy allows config writes during shields-down.
+    # The default policy (hermes-sandbox.yaml) locks it read-only.
   read_write:
     - /tmp
     - /dev/null
+    - /sandbox/.hermes           # Config dir — writable during shields-down
     - /sandbox/.hermes-data
     - /sandbox/.nemoclaw
 
