@@ -41,7 +41,7 @@ A theme is a sentence that describes the focus for the period: "Reliability: red
 
 ### Sprint review
 
-At sprint close, the TPM runs the `nemoclaw-maintainer-evening` skill to generate a handoff summary and bump open items to the next sprint. The engineering maintainer then reviews the milestone: close shipped items, note what slipped and why, and cut the release tag.
+At sprint close, the engineering maintainer runs the `nemoclaw-maintainer-evening` skill to generate a handoff summary, bump open items to the next sprint, and cut the release tag. The TPM reviews the milestone, closes shipped items, and notes what slipped and why.
 
 ---
 
@@ -133,14 +133,14 @@ These complement the hard gates in `MERGE-GATE.md` and apply across all PRs.
 
 | Role | Responsibilities |
 |---|---|
-| **TPM** | Runs `nemoclaw-maintainer-morning` and `nemoclaw-maintainer-evening` skills daily; first responder for new issues and PRs; manages sprint milestones and Enhancement Parking |
-| **Engineering maintainer** | Runs auto-merges via `nemoclaw-maintainer-day`; cuts release tags; owns PR review queue and merge decisions |
+| **TPM** | Runs `nemoclaw-maintainer-community-response` and `nemoclaw-maintainer-triage` skills; first responder for new issues and PRs; manages sprint milestones and Enhancement Parking |
+| **Engineering maintainer** | Runs `nemoclaw-maintainer-morning` and `nemoclaw-maintainer-evening` skills daily; runs auto-merges via `nemoclaw-maintainer-day`; cuts release tags; owns PR review queue and merge decisions |
 | **Area owner: security** | Reviews PRs flagged for security sweep; approves PSIRT escalations |
 | **Area owner: docs** | Reviews doc-only PRs and doc sections in feature PRs |
 | **Area owner: testing** | Reviews test coverage gaps; approves CI changes |
 | **Area owner: integrations** | Reviews PRs touching integration adapters (Slack, Discord, etc.) |
 
-**Rotation:** Defined externally by the team. The TPM hands off context via the `nemoclaw-maintainer-evening` skill's handoff summary — not Slack threads.
+**Rotation:** Defined externally by the team. The engineering maintainer hands off context via the `nemoclaw-maintainer-evening` skill's handoff summary — not Slack threads.
 
 **Decision authority:**
 
