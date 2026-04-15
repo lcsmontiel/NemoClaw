@@ -394,7 +394,11 @@ function step(n, total, msg) {
 }
 
 function getInstalledOpenshellVersion(versionOutput = null) {
-  const output = String(versionOutput ?? runCapture(["openshell", "-V"], { ignoreError: true })).trim();
+  const openshellBin = resolveOpenshell();
+  if (!versionOutput && !openshellBin) return null;
+  const output = String(
+    versionOutput ?? runCapture([openshellBin, "-V"], { ignoreError: true }),
+  ).trim();
   const match = output.match(/openshell\s+([0-9]+\.[0-9]+\.[0-9]+)/i);
   if (!match) return null;
   return match[1];
@@ -2986,11 +2990,11 @@ async function createSandbox(
   console.log("  Waiting for NemoClaw dashboard to become ready...");
   for (let i = 0; i < 15; i++) {
     const openshellBin = getOpenshellBinary();
-    const readyMatch = runCapture(
+    const readyResult = run(
       [openshellBin, "sandbox", "exec", sandboxName, "curl", "-sf", `http://localhost:${DASHBOARD_PORT}/`],
-      { ignoreError: true },
+      { ignoreError: true, suppressOutput: true },
     );
-    if (readyMatch) {
+    if (readyResult.status === 0) {
       console.log("  ✓ Dashboard is live");
       break;
     }
