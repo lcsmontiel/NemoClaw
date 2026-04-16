@@ -2647,9 +2647,8 @@ async function createSandbox(
       messagingTokenDefs.some(({ name, token }) => token && !providerExistsInGateway(name));
 
     // Detect whether any messaging credential has been rotated since the
-    // sandbox was created. OpenShell v0.0.26 cannot hot-reload provider
-    // credentials into a running sandbox — the only way to propagate a
-    // rotated token is to rebuild: backup → delete → create → restore.
+    // sandbox was created. Provider credentials are resolved once at sandbox
+    // startup, so a rotated token requires a rebuild to take effect.
     const credentialRotation = hasMessagingTokens
       ? detectMessagingCredentialRotation(sandboxName, messagingTokenDefs)
       : { changed: false, changedProviders: [] };
