@@ -9,7 +9,7 @@
 
 const fs = require("fs");
 const path = require("path");
-const { fork, execFileSync } = require("child_process");
+const { spawn, execFileSync } = require("child_process");
 const { run, runCapture, validateName, shellQuote } = require("./runner");
 const {
   buildPolicyGetCommand,
@@ -219,7 +219,7 @@ function shieldsDown(sandboxName: string, opts: ShieldsDownOpts = {}): void {
   const actualScript = fs.existsSync(timerScriptJs) ? timerScriptJs : timerScript;
 
   try {
-    const child = fork(actualScript, [sandboxName, snapshotPath, restoreAt.toISOString()], {
+    const child = spawn(process.execPath, [actualScript, sandboxName, snapshotPath, restoreAt.toISOString()], {
       detached: true,
       stdio: "ignore",
     });

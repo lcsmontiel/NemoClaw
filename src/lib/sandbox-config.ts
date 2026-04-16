@@ -144,7 +144,7 @@ function readSandboxConfig(sandboxName: string, target: AgentConfigTarget): Reco
   let raw: string;
   try {
     const result = captureOpenshellCommand(binary,
-      ["sandbox", "exec", sandboxName, "--", "cat", target.configPath],
+      ["sandbox", "exec", "--name", sandboxName, "--", "cat", target.configPath],
       { ignoreError: true, errorLine: console.error, exit: (code: number) => process.exit(code) },
     );
     raw = result.output || "";
@@ -366,7 +366,7 @@ function configSet(sandboxName: string, opts: ConfigSetOpts = {}): void {
     console.log("  Restarting sandbox agent process...");
     const restartBinary = getOpenshellBinary();
     const result = captureOpenshellCommand(restartBinary, [
-      "sandbox", "exec", sandboxName, "--", "kill", "-HUP", "1",
+      "sandbox", "exec", "--name", sandboxName, "--", "kill", "-HUP", "1",
     ], { ignoreError: true, errorLine: console.error, exit: (code: number) => process.exit(code) });
 
     if (result.status !== 0) {
