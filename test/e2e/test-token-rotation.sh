@@ -159,12 +159,10 @@ else
 fi
 
 # Verify credential hashes are stored for this sandbox in the registry
-if [ -f "$REGISTRY" ] && python3 -c "
-import json, sys
-r = json.load(open('$REGISTRY'))
-sb = r.get('sandboxes', {}).get('$SANDBOX_NAME', {})
-h = sb.get('providerCredentialHashes', {})
-sys.exit(0 if 'TELEGRAM_BOT_TOKEN' in h else 1)
+if [ -f "$REGISTRY" ] && node -e "
+const r = require('$REGISTRY');
+const h = (r.sandboxes || {})['$SANDBOX_NAME']?.providerCredentialHashes || {};
+process.exit('TELEGRAM_BOT_TOKEN' in h ? 0 : 1);
 " 2>/dev/null; then
   pass "Credential hash stored for $SANDBOX_NAME"
 else
