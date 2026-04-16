@@ -75,10 +75,8 @@ setTimeout(() => {
       process.exit(1);
     }
 
-    // Restore policy
-    run(buildPolicySetCommand(snapshotPath, sandboxName), { ignoreError: true });
-
-    // Update state
+    // Update state first — policy restore can take seconds and callers
+    // check state to determine whether shields are up or down.
     updateState({
       shieldsDown: false,
       shieldsDownAt: null,
@@ -86,6 +84,9 @@ setTimeout(() => {
       shieldsDownReason: null,
       shieldsDownPolicy: null,
     });
+
+    // Restore policy (slow — openshell policy set --wait blocks)
+    run(buildPolicySetCommand(snapshotPath, sandboxName), { ignoreError: true });
 
     // Audit
     appendAudit({
