@@ -17,6 +17,14 @@ export interface NemoClawState {
   updatedAt: string;
   lastRebuildAt: string | null;
   lastRebuildBackupPath: string | null;
+
+  // Shields state (RFC: Sandbox Management Commands, Phase 1)
+  shieldsDown: boolean;
+  shieldsDownAt: string | null;
+  shieldsDownTimeout: number | null;
+  shieldsDownReason: string | null;
+  shieldsDownPolicy: string | null;
+  shieldsPolicySnapshotPath: string | null;
 }
 
 let stateDirCreated = false;
@@ -45,6 +53,12 @@ function blankState(): NemoClawState {
     updatedAt: new Date().toISOString(),
     lastRebuildAt: null,
     lastRebuildBackupPath: null,
+    shieldsDown: false,
+    shieldsDownAt: null,
+    shieldsDownTimeout: null,
+    shieldsDownReason: null,
+    shieldsDownPolicy: null,
+    shieldsPolicySnapshotPath: null,
   };
 }
 
@@ -54,7 +68,10 @@ export function loadState(): NemoClawState {
   if (!existsSync(path)) {
     return blankState();
   }
-  return JSON.parse(readFileSync(path, "utf-8")) as NemoClawState;
+  // Merge over blankState so that state files created before shields fields
+  // were added still return valid NemoClawState with sensible defaults.
+  const persisted = JSON.parse(readFileSync(path, "utf-8")) as Partial<NemoClawState>;
+  return { ...blankState(), ...persisted };
 }
 
 export function saveState(state: NemoClawState): void {
