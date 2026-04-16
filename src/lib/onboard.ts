@@ -3562,7 +3562,21 @@ async function setupNim(gpu) {
                 remoteConfig.helpUrl,
               );
               if (validation.ok) {
-                preferredInferenceApi = validation.api;
+                // Force chat completions for all OpenAI-compatible endpoints.
+                // Many backends (Ollama, vLLM, LiteLLM) expose /v1/responses
+                // but do not correctly handle the `developer` role used by the
+                // Responses API — messages with that role are silently dropped,
+                // causing the model to receive no system prompt or tool
+                // definitions. Chat completions uses the `system` role which
+                // is universally supported. Users who need the Responses API
+                // can override via NEMOCLAW_PREFERRED_API=openai-responses.
+                // See: https://github.com/NVIDIA/NemoClaw/issues/1932
+                if (validation.api !== "openai-completions") {
+                  console.log(
+                    "  ℹ Using chat completions API (compatible endpoints may not support the Responses API developer role)",
+                  );
+                }
+                preferredInferenceApi = "openai-completions";
                 break;
               }
               if (
