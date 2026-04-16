@@ -494,7 +494,12 @@ fi
 # ══════════════════════════════════════════════════════════════════
 section "Phase 12: Double shields-down rejected"
 
-nemoclaw "${SANDBOX_NAME}" shields down --timeout 5m --reason "Double-down test" 2>&1
+# First shields down may fail if openshell policy set --wait times out
+# on a slow CI runner. Retry once before testing the double-down guard.
+if ! nemoclaw "${SANDBOX_NAME}" shields down --timeout 5m --reason "Double-down test" 2>&1; then
+  info "First shields down failed (policy set timeout?) — retrying..."
+  nemoclaw "${SANDBOX_NAME}" shields down --timeout 5m --reason "Double-down test" 2>&1
+fi
 DOUBLE_DOWN=$(nemoclaw "${SANDBOX_NAME}" shields down --timeout 5m --reason "Should fail" 2>&1 || true)
 
 if echo "$DOUBLE_DOWN" | grep -q "already DOWN"; then
