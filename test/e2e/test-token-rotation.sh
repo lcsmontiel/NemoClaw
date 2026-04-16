@@ -158,11 +158,17 @@ else
   fail "Provider ${SANDBOX_NAME}-telegram-bridge not found"
 fi
 
-# Verify credential hashes are stored in registry
-if [ -f "$REGISTRY" ] && grep -q "providerCredentialHashes" "$REGISTRY"; then
-  pass "Credential hashes stored in registry"
+# Verify credential hashes are stored for this sandbox in the registry
+if [ -f "$REGISTRY" ] && python3 -c "
+import json, sys
+r = json.load(open('$REGISTRY'))
+sb = r.get('sandboxes', {}).get('$SANDBOX_NAME', {})
+h = sb.get('providerCredentialHashes', {})
+sys.exit(0 if 'TELEGRAM_BOT_TOKEN' in h else 1)
+" 2>/dev/null; then
+  pass "Credential hash stored for $SANDBOX_NAME"
 else
-  fail "Credential hashes not found in registry"
+  fail "Credential hash not found for $SANDBOX_NAME in registry"
 fi
 
 # ── Phase 2: Rotate token (re-onboard with token B) ──────────────
@@ -175,7 +181,11 @@ unset NEMOCLAW_RECREATE_SANDBOX
 ONBOARD_OUTPUT=$(nemoclaw onboard --non-interactive 2>&1)
 onboard_exit=$?
 
-info "onboard exit code: $onboard_exit"
+if [ $onboard_exit -ne 0 ]; then
+  fail "Phase 2 onboard failed (exit $onboard_exit)"
+  echo "$ONBOARD_OUTPUT" | tail -30
+  exit 1
+fi
 
 if echo "$ONBOARD_OUTPUT" | grep -q "credential(s) rotated"; then
   pass "Credential rotation detected"
@@ -204,6 +214,13 @@ fi
 section "Phase 3: Re-onboard with same token (no rotation expected)"
 
 ONBOARD_OUTPUT=$(nemoclaw onboard --non-interactive 2>&1)
+onboard_exit=$?
+
+if [ $onboard_exit -ne 0 ]; then
+  fail "Phase 3 onboard failed (exit $onboard_exit)"
+  echo "$ONBOARD_OUTPUT" | tail -30
+  exit 1
+fi
 
 if echo "$ONBOARD_OUTPUT" | grep -q "reusing it"; then
   pass "Sandbox reused when token unchanged"

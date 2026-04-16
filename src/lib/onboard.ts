@@ -2863,10 +2863,19 @@ async function createSandbox(
         if (backup.success) {
           note(`  ✓ State backed up (${backup.backedUpDirs.length} directories)`);
           pendingStateRestore = backup;
+        } else {
+          console.error("  State backup failed — aborting rebuild to prevent data loss.");
+          console.error("  Pass --recreate-sandbox to force recreation without backup.");
+          upsertMessagingProviders(messagingTokenDefs);
+          ensureDashboardForward(sandboxName, chatUiUrl);
+          return sandboxName;
         }
       } catch (err) {
-        console.error(`  Warning: state backup failed: ${err.message}`);
-        console.error("  Workspace files will be lost during rebuild.");
+        console.error(`  State backup threw: ${err.message} — aborting rebuild.`);
+        console.error("  Pass --recreate-sandbox to force recreation without backup.");
+        upsertMessagingProviders(messagingTokenDefs);
+        ensureDashboardForward(sandboxName, chatUiUrl);
+        return sandboxName;
       }
     }
 
