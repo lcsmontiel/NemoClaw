@@ -6,6 +6,7 @@
 // Supports non-interactive mode via --non-interactive flag or
 // NEMOCLAW_NON_INTERACTIVE=1 env var for CI/CD pipelines.
 
+const crypto = require("node:crypto");
 const fs = require("fs");
 const os = require("os");
 const path = require("path");
@@ -71,6 +72,7 @@ const agentOnboard = require("./agent-onboard");
 const agentDefs = require("./agent-defs");
 
 const gatewayState = require("./gateway-state");
+const sandboxState = require("./sandbox-state");
 const validation = require("./validation");
 const urlUtils = require("./url-utils");
 const buildContext = require("./build-context");
@@ -790,6 +792,45 @@ function providerExistsInGateway(name) {
     stdio: ["ignore", "ignore", "ignore"],
   });
   return result.status === 0;
+}
+
+/**
+ * Compute a SHA-256 hash of a credential value for change detection.
+ * Stored in the sandbox registry so we can detect rotation on reuse
+ * without needing to read the credential back from OpenShell.
+ * @param {string} value - Credential value to hash.
+ * @returns {string|null} Hex-encoded SHA-256 hash, or null if value is falsy.
+ */
+function hashCredential(value) {
+  if (!value) return null;
+  return crypto.createHash("sha256").update(String(value).trim()).digest("hex");
+}
+
+/**
+ * Detect whether any messaging provider credential has been rotated since
+ * the sandbox was created, by comparing SHA-256 hashes of the current
+ * token values against hashes stored in the sandbox registry.
+ *
+ * Returns `changed: false` for legacy sandboxes that have no stored hashes
+ * (conservative — avoids unnecessary rebuilds after upgrade).
+ *
+ * @param {string} sandboxName - Name of the sandbox to check.
+ * @param {Array<{name: string, envKey: string, token: string|null}>} tokenDefs
+ * @returns {{ changed: boolean, changedProviders: string[] }}
+ */
+function detectMessagingCredentialRotation(sandboxName, tokenDefs) {
+  const sb = registry.getSandbox(sandboxName);
+  const storedHashes = sb?.providerCredentialHashes || {};
+  const changedProviders = [];
+  for (const { name, envKey, token } of tokenDefs) {
+    if (!token) continue;
+    const storedHash = storedHashes[envKey];
+    if (!storedHash) continue;
+    if (storedHash !== hashCredential(token)) {
+      changedProviders.push(name);
+    }
+  }
+  return { changed: changedProviders.length > 0, changedProviders };
 }
 
 function verifyInferenceRoute(_provider, _model) {
@@ -2591,6 +2632,10 @@ async function createSandbox(
   // Reconcile local registry state with the live OpenShell gateway state.
   const liveExists = pruneStaleSandboxEntry(sandboxName);
 
+  // Declared outside the liveExists block so it is accessible during
+  // post-creation restore (the sandbox create path runs after the block).
+  let pendingStateRestore = null;
+
   if (liveExists) {
     const existingSandboxState = getSandboxReuseState(sandboxName);
 
@@ -2601,7 +2646,15 @@ async function createSandbox(
       hasMessagingTokens &&
       messagingTokenDefs.some(({ name, token }) => token && !providerExistsInGateway(name));
 
-    if (!isRecreateSandbox() && !needsProviderMigration) {
+    // Detect whether any messaging credential has been rotated since the
+    // sandbox was created. OpenShell v0.0.26 cannot hot-reload provider
+    // credentials into a running sandbox — the only way to propagate a
+    // rotated token is to rebuild: backup → delete → create → restore.
+    const credentialRotation = hasMessagingTokens
+      ? detectMessagingCredentialRotation(sandboxName, messagingTokenDefs)
+      : { changed: false, changedProviders: [] };
+
+    if (!isRecreateSandbox() && !needsProviderMigration && !credentialRotation.changed) {
       if (isNonInteractive()) {
         if (existingSandboxState === "ready") {
           // Upsert messaging providers even on reuse so credential changes take
@@ -2643,9 +2696,29 @@ async function createSandbox(
       }
     }
 
+    // Back up workspace state before destroying the sandbox when triggered
+    // by credential rotation, so files can be restored after recreation.
+    if (credentialRotation.changed && existingSandboxState === "ready") {
+      const rotatedNames = credentialRotation.changedProviders.join(", ");
+      console.log(`  Messaging credential(s) rotated: ${rotatedNames}`);
+      console.log("  Rebuilding sandbox to propagate new credentials to the L7 proxy...");
+      try {
+        const backup = sandboxState.backupSandboxState(sandboxName);
+        if (backup.success) {
+          note(`  ✓ State backed up (${backup.backedUpDirs.length} directories)`);
+          pendingStateRestore = backup;
+        }
+      } catch (err) {
+        console.error(`  Warning: state backup failed: ${err.message}`);
+        console.error("  Workspace files will be lost during rebuild.");
+      }
+    }
+
     if (needsProviderMigration) {
       console.log(`  Sandbox '${sandboxName}' exists but messaging providers are not attached.`);
       console.log("  Recreating to ensure credentials flow through the provider pipeline.");
+    } else if (credentialRotation.changed) {
+      // Message already printed above during backup.
     } else if (existingSandboxState === "ready") {
       note(`  Sandbox '${sandboxName}' exists and is ready — recreating by explicit request.`);
     } else {
@@ -3001,13 +3074,37 @@ async function createSandbox(
 
   // Register only after confirmed ready — prevents phantom entries
   const effectiveAgent = agent || agentDefs.loadAgent("openclaw");
+  const providerCredentialHashes = {};
+  for (const { envKey, token } of messagingTokenDefs) {
+    if (token) {
+      providerCredentialHashes[envKey] = hashCredential(token);
+    }
+  }
   registry.registerSandbox({
     name: sandboxName,
     gpuEnabled: !!gpu,
     agent: agent ? agent.name : null,
     agentVersion: fromDockerfile ? null : effectiveAgent.expectedVersion || null,
     dangerouslySkipPermissions: dangerouslySkipPermissions || undefined,
+    providerCredentialHashes:
+      Object.keys(providerCredentialHashes).length > 0 ? providerCredentialHashes : undefined,
   });
+
+  // Restore workspace state if we backed it up during credential rotation.
+  if (pendingStateRestore?.success) {
+    note("  Restoring workspace state after credential rotation...");
+    const restore = sandboxState.restoreSandboxState(
+      sandboxName,
+      pendingStateRestore.manifest.backupPath,
+    );
+    if (restore.success) {
+      note(`  ✓ State restored (${restore.restoredDirs.length} directories)`);
+    } else {
+      console.error(
+        `  Warning: partial restore. Manual recovery: ${pendingStateRestore.manifest.backupPath}`,
+      );
+    }
+  }
 
   // DNS proxy — run a forwarder in the sandbox pod so the isolated
   // sandbox namespace can resolve hostnames (fixes #626).
@@ -5644,6 +5741,8 @@ module.exports = {
   summarizeProbeFailure,
   hasResponsesToolCall,
   upsertProvider,
+  hashCredential,
+  detectMessagingCredentialRotation,
   hydrateCredentialEnv,
   pruneKnownHostsEntries,
   shouldIncludeBuildContextPath,

@@ -18,6 +18,7 @@ export interface SandboxEntry {
   agent?: string | null;
   dangerouslySkipPermissions?: boolean;
   agentVersion?: string | null;
+  providerCredentialHashes?: Record<string, string>;
 }
 
 export interface SandboxRegistry {
