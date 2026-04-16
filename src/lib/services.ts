@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { execSync, spawn } from "node:child_process";
+import { execSync, spawn, spawnSync } from "node:child_process";
 import {
   closeSync,
   existsSync,
@@ -14,6 +14,7 @@ import {
 import { join } from "node:path";
 
 import { DASHBOARD_PORT } from "./ports";
+import { resolveOpenshell } from "./resolve-openshell";
 import { buildSubprocessEnv } from "./subprocess-env";
 
 // ---------------------------------------------------------------------------
@@ -240,9 +241,60 @@ export function showStatus(opts: ServiceOptions = {}): void {
   }
 }
 
+/**
+ * Stop the OpenClaw gateway (and its messaging channels) inside the sandbox.
+ *
+ * Sends SIGTERM to the gateway process via `openshell sandbox exec`.
+ * The gateway's own signal handler (`cleanup()` in nemoclaw-start.sh)
+ * forwards the signal to child processes, which stops Telegram/Discord/
+ * Slack polling.  When openshell is not available or the sandbox is
+ * unreachable the function warns and continues — host-side cleanup
+ * should still proceed.
+ */
+export function stopSandboxChannels(sandboxName: string): void {
+  const openshell = resolveOpenshell();
+  if (!openshell) {
+    warn("openshell not found — cannot stop in-sandbox messaging channels.");
+    return;
+  }
+
+  info("Stopping in-sandbox OpenClaw gateway and messaging channels...");
+  const result = spawnSync(
+    openshell,
+    ["sandbox", "exec", sandboxName, "--", "pkill", "-TERM", "-f", "openclaw gateway"],
+    { encoding: "utf-8", stdio: ["ignore", "pipe", "pipe"], timeout: 15000 },
+  );
+
+  // pkill exits 0 when at least one process was matched, 1 when no
+  // processes matched (gateway already stopped).  Treat both as success.
+  if (result.status === 0) {
+    info("OpenClaw gateway stopped inside sandbox.");
+  } else if (result.status === 1) {
+    info("OpenClaw gateway was not running inside sandbox.");
+  } else {
+    // Exit code >1 or spawn failure — sandbox may be unreachable.
+    warn(
+      `Could not stop in-sandbox gateway (exit ${String(result.status ?? "unknown")}).` +
+        " The sandbox may be unreachable.",
+    );
+  }
+}
+
 export function stopAll(opts: ServiceOptions = {}): void {
   const pidDir = resolvePidDir(opts);
   ensurePidDir(pidDir);
+
+  // Stop the in-sandbox OpenClaw gateway (and its messaging channels).
+  const sandboxName =
+    opts.sandboxName ?? process.env.NEMOCLAW_SANDBOX ?? process.env.SANDBOX_NAME;
+  if (sandboxName) {
+    stopSandboxChannels(sandboxName);
+  } else {
+    warn("No sandbox name available — cannot stop in-sandbox messaging channels.");
+    warn("Hint: run 'nemoclaw stop' with a registered sandbox or set NEMOCLAW_SANDBOX.");
+  }
+
+  // Stop host-side services.
   stopService(pidDir, "cloudflared");
   info("All services stopped.");
 }
