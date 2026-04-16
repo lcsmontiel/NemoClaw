@@ -539,11 +539,11 @@ function openshellArgv(args, options = {}) {
 }
 
 function runOpenshell(args, opts = {}) {
-  return run(openshellArgv(args), opts);
+  return run(openshellArgv(args, opts), opts);
 }
 
 function runCaptureOpenshell(args, opts = {}) {
-  return runCapture(openshellArgv(args), opts);
+  return runCapture(openshellArgv(args, opts), opts);
 }
 
 // URL/string utilities — delegated to src/lib/url-utils.ts
