@@ -119,6 +119,8 @@ setTimeout(() => {
       restored_by: "auto_timer",
       error: err?.message ?? String(err),
     });
+    cleanupMarker();
+    process.exit(1);
   } finally {
     cleanupMarker();
     process.exit(0);

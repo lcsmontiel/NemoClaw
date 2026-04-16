@@ -29,15 +29,23 @@ export function slashConfigShow(): PluginCommandResult {
     };
   }
 
-  // Redact credential env var value — only show the variable name
-  const redactedCredential = `$${config.credentialEnv}`;
-  const lastFour = config.credentialEnv ? `(set via env var)` : "(not configured)";
+  // Redact credential env var value — only show the variable name when it
+  // looks like a safe env-var identifier. Malformed persisted data must
+  // never be echoed verbatim (could leak a raw token).
+  const hasCredentialEnv =
+    typeof config.credentialEnv === "string" && config.credentialEnv.length > 0;
+  const isSafeEnvName = hasCredentialEnv && /^[A-Z_][A-Z0-9_]*$/.test(config.credentialEnv);
+  const authTokenText = !hasCredentialEnv
+    ? "(not configured)"
+    : isSafeEnvName
+      ? `$${config.credentialEnv} (set via env var)`
+      : "(configured)";
 
   const lines = [
     "**NemoClaw Config**",
     "",
     `Gateway:     ${describeOnboardEndpoint(config)}`,
-    `Auth token:  ${redactedCredential} ${lastFour}`,
+    `Auth token:  ${authTokenText}`,
     `Inference:   ${describeOnboardProvider(config)}`,
     config.ncpPartner ? `NCP Partner: ${config.ncpPartner}` : null,
     `Model:       ${config.model}`,

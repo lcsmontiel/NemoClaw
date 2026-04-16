@@ -86,7 +86,7 @@ describe("config set helpers", () => {
     });
 
     it("accepts public http URLs", () => {
-      expect(() => validateUrlValue("https://example.com")).not.toThrow();
+      expect(() => validateUrlValue("http://example.com")).not.toThrow();
     });
 
     it("rejects localhost", () => {

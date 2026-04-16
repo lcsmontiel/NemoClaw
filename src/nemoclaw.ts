@@ -2246,9 +2246,12 @@ const [cmd, ...args] = process.argv.slice(2);
   }
 
   // Sandbox-scoped commands: nemoclaw <name> <action>
-  // If the registry doesn't know this name but the action is connect or skill,
-  // attempt recovery — the sandbox may still be live with a stale registry.
-  if (!registry.getSandbox(cmd) && (args[0] === "connect" || args[0] === "skill")) {
+  // If the registry doesn't know this name but the action is a sandbox-scoped
+  // command, attempt recovery — the sandbox may still be live with a stale registry.
+  if (
+    !registry.getSandbox(cmd) &&
+    ["connect", "skill", "shields", "config"].includes(args[0] || "")
+  ) {
     validateName(cmd, "sandbox name");
     await recoverRegistryEntries({ requestedSandboxName: cmd });
   }

@@ -71,6 +71,8 @@ function blankState(): NemoClawState {
     hostBackupPath: null,
     createdAt: null,
     updatedAt: new Date().toISOString(),
+    lastRebuildAt: null,
+    lastRebuildBackupPath: null,
     shieldsDown: false,
     shieldsDownAt: null,
     shieldsDownTimeout: null,
