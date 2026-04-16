@@ -1,6 +1,6 @@
 ---
 name: nemoclaw-maintainer-community-response
-description: Drafts community-facing responses to GitHub issues and PRs for NemoClaw maintainers. For each item, recommends an action (comment, close, close+comment, request changes, escalate) and drafts the response text. Handles won't-fix closures, out-of-scope closures, superseded PRs, poorly designed PR rejections, security acknowledgments, duplicate issues, feature request routing, needs-info labeling, and general triage. Logs approved responses locally to ~/development/daily-rhythm/activity/nemoclaw-community-responses.md. Tone: community first, firm and friendly. Trigger keywords - respond to issue, close issue, respond to PR, community response, won't fix, out of scope, reject PR, triage response, draft response, what should I say, needs info, duplicate issue, feature request.
+description: Drafts community-facing responses to GitHub issues and PRs for NemoClaw maintainers. For each item, recommends an action (comment, close, close+comment, request changes, escalate) and drafts the response text. Handles won't-fix closures, out-of-scope closures, superseded PRs, poorly designed PR rejections, security acknowledgments, duplicate issues, feature request routing, needs-info labeling, and general triage. Logs approved responses to a local monthly file — path configured in ~/.claude/skills/nemoclaw-maintainer-community-response/config.md. Tone: community first, firm and friendly. Trigger keywords - respond to issue, close issue, respond to PR, community response, won't fix, out of scope, reject PR, triage response, draft response, what should I say, needs info, duplicate issue, feature request, stale sweep, 7-day warning, 14-day close, run stale sweep, find stale.
 user_invocable: true
 ---
 
@@ -50,9 +50,33 @@ Map the item to one of the situations in the guide:
 | Redirect to Discussions | Open-ended question or design topic, not actionable |
 | Triage acknowledgment | Valid open issue, confirmed, no timeline yet |
 | Needs info (first contact) | Can't investigate without more information from contributor |
-| Needs info (close) | Already labeled `status: needs-info`, 7+ days, no response |
+| Needs info (7-day warning) | Labeled `status: needs-info`, 7 days elapsed, no response — post warning |
+| Needs info (close) | Labeled `status: needs-info`, 14 days elapsed, no response — close |
+| Rebase (7-day warning) | Labeled `status: rebase`, 7 days elapsed, no response — post warning |
+| Rebase (close) | Labeled `status: rebase`, 14 days elapsed, no response — close |
 
 If the situation is ambiguous, ask: "Is this a closure, a needs-info, a routing decision, or something else?"
+
+### Supersession verification gate (mandatory before classifying any PR as superseded)
+
+Do not classify a PR as superseded based on a hunch or a keyword match in `git log`. Before presenting a supersession recommendation, verify all three of the following:
+
+1. **The superseding work is actually merged to main:**
+   ```bash
+   git fetch origin
+   git log origin/main --oneline | grep -iE "<relevant keyword or PR number>"
+   ```
+
+2. **The files the candidate PR touches still exist and were changed by the superseding work** — check both:
+   ```bash
+   git ls-tree -r origin/main --name-only | grep "<filename from PR>"
+   gh api repos/NVIDIA/NemoClaw/pulls/<superseding-pr>/files --jq '.[].filename'
+   ```
+   If the candidate PR's target files no longer exist (e.g., removed in the TypeScript migration), note this explicitly — the changes are moot, which is a valid supersession basis but a different one.
+
+3. **The core intent is covered, not just surface-level overlap** — read both PR bodies and confirm the superseding PR addresses the same root problem. Keyword overlap alone is not enough. If the approaches differ significantly (e.g., external bridge vs. in-sandbox token injection), name the difference explicitly in the draft and in the recommendation.
+
+If any of the three checks fails or is ambiguous, do not classify as superseded. Present the finding to the user and ask how to proceed.
 
 ## Step 4: Recommend an Action and Project Status
 
@@ -105,6 +129,7 @@ Write the response following the template from the guide. Apply these rules:
 - Write in second person, direct address to the contributor.
 - Warm but specific — generic phrases without substance read as dismissive.
 - Never reference internal systems, roadmap items, or org decisions that shouldn't be public.
+- **7-day notice in first-contact comments:** When posting a `needs-info` comment or `rebase nudge`, include a one-sentence notice at the end of the comment: "If we don't hear back within 7 days, we'll post a reminder; items with no response at 14 days are closed to keep the queue healthy."
 - **Hedged language for risks and impacts:** Do not assert that something IS a risk or problem. Use acknowledging, hedged language: "could be", "may", "worth noting", "potentially". Example: "unbounded CPU/memory could be an operational risk" — not "is a real operational risk". This applies to security, performance, correctness, and other concerns raised in response comments.
 - **Rebase verification gate (mandatory before any rebase nudge):** Before posting a rebase nudge or applying `status: rebase`, check the PR's actual merge state:
   ```bash
@@ -156,24 +181,83 @@ Ask: "Want me to adjust the tone or any specific wording?"
 
 ## Step 7: Log the Approved Response
 
-When the user approves, append to `~/development/daily-rhythm/activity/nemoclaw-community-responses.md`.
+**First, determine the log directory:**
 
-Use the absolute path — this file lives in the daily-rhythm activity folder so it is persisted to GitLab over time, not in the NemoClaw repo.
+```bash
+cat ~/.claude/skills/nemoclaw-maintainer-community-response/config.md
+```
+
+Extract the line immediately after `## community_responses_dir` — that is the directory path.
+
+If the config file does not exist or contains no `community_responses_dir` value, ask:
+> "Where should I log community responses? Provide the full directory path (e.g. `/Users/yourname/development/daily-rhythm/activity/community-responses`)."
+
+After the user provides the path, write it to config before proceeding:
+```bash
+cat > ~/.claude/skills/nemoclaw-maintainer-community-response/config.md << 'EOF'
+# nemoclaw-maintainer-community-response — Config
+
+## community_responses_dir
+/path/provided/by/user
+
+The skill appends to `{community_responses_dir}/{YYYY-MM}.md` where YYYY-MM is the
+current month in America/Los_Angeles time. Update this path if the daily-rhythm repo moves.
+EOF
+```
+
+**Compute the monthly file path:**
+```bash
+YM=$(python3 -c "from datetime import datetime; from zoneinfo import ZoneInfo; print(datetime.now(ZoneInfo('America/Los_Angeles')).strftime('%Y-%m'))")
+# LOG_FILE = {community_responses_dir}/${YM}.md
+```
+
+Create the monthly file if it doesn't exist. Never stage or commit this file to the NemoClaw repo.
+
+**Format v2** — all fields required, in this order:
 
 ```
-## [ISSUE|PR] NVIDIA/NemoClaw#<number> — <title>
+## [ISSUE|PR] #<number> — <title>
 **Date:** YYYY-MM-DD
-**Action:** comment | close | request changes | escalate
-**Project status:** <status>
-**Labels:** <suggested or applied labels>
+**Time:** HH:MM PDT
+**Author:** @github-username (external | NVIDIA | bot)
+**Action:** closed | commented | labeled | reopened
+**Resolution:** resolved | duplicate | stale | wontfix | superseded | needs-info | other | —
+**Labels:** label1, label2 | (none)
 
 **Response:**
 <approved response text>
 
----
+===
 ```
 
-Create the file if it doesn't exist. Never stage or commit this file to the NemoClaw repo.
+**Field rules:**
+- **Action**: pipe-separated for compound actions — `closed | commented` is the most common (close with a public response); `commented` alone for rebase nudges or info requests; `labeled` for label-only actions
+- **Resolution**: why it was closed — use `—` when Action does not include `closed`
+- **Labels**: labels actually applied, comma-separated — use `(none)` if no labels were added
+- **Author**: the GitHub handle of the issue/PR reporter, not the maintainer responding
+- **Time**: current time in PDT/PST (America/Los_Angeles)
+- **Response section**: include if a public comment was posted; omit entirely for label-only actions with no comment
+
+**Batch entries** (multiple numbers in one heading):
+```
+## PR #1482, #1485, #1487 — Rebase nudges (batch 13)
+**Date:** 2026-04-15
+**Time:** 10:15 PDT
+**Author:** various
+**Action:** commented
+**Resolution:** —
+**Labels:** (none)
+
+**Response:**
+#1482 by ColinM-sys — joint rebase suggested. #1485 by kagura-agent — rebase suggested.
+
+===
+```
+
+**After appending, verify the entry landed:**
+```bash
+tail -25 "$LOG_FILE"
+```
 
 ## Batch Mode
 
@@ -197,6 +281,139 @@ Columns:
 
 Ask the user to confirm or adjust the batch plan before proceeding to draft responses one by one.
 
+## Stale Sweep
+
+**Trigger phrases:** "stale sweep", "run stale sweep", "7-day warnings", "14-day closures", "find stale", "stale check"
+
+Runs Stage 2 (7-day warning) and/or Stage 3 (14-day close) for items carrying `status: needs-info` or `status: rebase`. Ask the user which stage(s) to run if not specified.
+
+### Step A: Discover candidates
+
+Run all queries:
+
+```bash
+# Issues with status: needs-info
+gh issue list --repo NVIDIA/NemoClaw --label "status: needs-info" --state open \
+  --json number,title,author,url --limit 200
+
+# PRs with status: needs-info
+gh pr list --repo NVIDIA/NemoClaw --label "status: needs-info" --state open \
+  --json number,title,author,url --limit 200
+
+# PRs with status: rebase
+gh pr list --repo NVIDIA/NemoClaw --label "status: rebase" --state open \
+  --json number,title,author,url --limit 200
+```
+
+### Step B: Determine label age and author activity
+
+For each candidate, check when the relevant label was last applied:
+
+```bash
+gh api repos/NVIDIA/NemoClaw/issues/<number>/events \
+  --jq '[.[] | select(.event == "labeled" and .label.name == "status: needs-info")] | last | .created_at'
+```
+
+Use `"status: rebase"` for rebase items. Compute age in days from today.
+
+**For `status: needs-info` items only** — also check when the author last commented:
+
+```bash
+gh api repos/NVIDIA/NemoClaw/issues/<number>/comments \
+  --jq '[.[] | select(.user.login == "<author>")] | last | .created_at'
+```
+
+If the author's last comment is **after** the label was applied, the author has responded since labeling. Do NOT include this item in the warning or close buckets. Move it to the "responded" group (Step D) for label review. The `status: needs-info` label may no longer apply — the maintainer should re-triage.
+
+Note: this author-activity check does not apply to `status: rebase` items. A PR comment does not resolve merge conflicts; rebase state is determined by code, not by conversation.
+
+Bucket each item:
+- **Author commented after label** → responded — review for label removal (needs-info only)
+- **7–13 days, no author response** → Stage 2 candidate (warning)
+- **14+ days, no author response** → Stage 3 candidate (close)
+- **< 7 days, no author response** → ignore
+
+### Step C: Check author NVIDIA membership
+
+For every candidate:
+
+```bash
+gh api orgs/NVIDIA/members/<username> --silent 2>/dev/null && echo "NVIDIA member" || echo "external"
+```
+
+### Step D: Present candidates by stage
+
+Present tables by category. If a category has no candidates, say so explicitly.
+
+**Responded since labeled — review for label removal (needs-info only):**
+```
+┌───────┬────────┬────────────┬──────────┬──────────┬─────────────────────┐
+│  #    │  Type  │  Author    │   NV?    │ Label Age│ Last Author Comment │
+├───────┼────────┼────────────┼──────────┼──────────┼─────────────────────┤
+│ #1234 │ issue  │ username   │ external │    8d    │ Apr 13 (after label)│
+└───────┴────────┴────────────┴──────────┴──────────┴─────────────────────┘
+```
+These items need re-triage, not automated action. Ask the maintainer: "Author has responded — does their reply address the request? If yes, remove `status: needs-info` and re-triage. If no, leave the label in place."
+
+**Stage 2 — Warning (7–13 days):**
+```
+┌───────┬────────┬────────────┬──────────┬────────────┬──────┬─────────┐
+│  #    │  Type  │  Author    │   NV?    │   Label    │  Age │ Action  │
+├───────┼────────┼────────────┼──────────┼────────────┼──────┼─────────┤
+│ #1234 │ issue  │ username   │ external │ needs-info │  8d  │ warning │
+└───────┴────────┴────────────┴──────────┴────────────┴──────┴─────────┘
+```
+
+**Stage 3 — Close (14+ days):**
+```
+┌───────┬────────┬────────────┬──────────┬────────────┬──────┬─────────┐
+│  #    │  Type  │  Author    │   NV?    │   Label    │  Age │ Action  │
+├───────┼────────┼────────────┼──────────┼────────────┼──────┼─────────┤
+│ #1235 │ PR     │ username2  │ external │ rebase     │ 21d  │  close  │
+└───────┴────────┴────────────┴──────────┴────────────┴──────┴─────────┘
+```
+
+Ask: "Confirm which items to action — remove any to skip."
+
+If no candidates in either stage, report that and stop.
+
+### Step E: Draft and post — Stage 2 (warning)
+
+For each confirmed Stage 2 item, present the draft before posting. Leave the item **open** — do NOT close at Stage 2.
+
+**Template — needs-info warning:**
+> Just a friendly nudge — we're still waiting on the information requested above. If we don't hear back within 7 days, we'll close this to keep the queue healthy. Feel free to reopen any time if you'd like to continue.
+
+**Template — rebase warning:**
+> Just a friendly nudge — this PR still has merge conflicts. If the rebase isn't completed within 7 days, we'll close this to keep the queue healthy. Feel free to reopen once it's rebased, or open a new PR.
+
+```bash
+gh issue comment <number> --repo NVIDIA/NemoClaw --body "<warning comment>"
+gh pr comment <number> --repo NVIDIA/NemoClaw --body "<warning comment>"
+```
+
+### Step F: Draft and post — Stage 3 (close)
+
+For each confirmed Stage 3 item, present the draft before posting.
+
+**Template — needs-info close:**
+> Closing due to inactivity — it's been 14 days since we requested additional information and we haven't heard back. Feel free to reopen if you're able to follow up, or open a new issue with the requested details included. Thanks for contributing to NemoClaw.
+
+**Template — rebase close:**
+> Closing due to inactivity — this PR has had merge conflicts for 14 days without an update. Feel free to reopen once it's rebased against the latest main, or open a new PR to continue the work. Thanks for contributing to NemoClaw.
+
+```bash
+gh issue close <number> --repo NVIDIA/NemoClaw --comment "<closing comment>"
+gh pr close <number> --repo NVIDIA/NemoClaw --comment "<closing comment>"
+```
+
+### Step G: Log each actioned item
+
+For every Stage 2 warning and Stage 3 closure, append to the log using the Step 7 format:
+
+- Stage 2: **Action:** `comment` · **Project status:** `No Status`
+- Stage 3: **Action:** `close` · **Project status:** `No Status`
+
 ## Response Time Check
 
 If the user asks whether a response window is at risk, check against:
@@ -206,6 +423,7 @@ If the user asks whether a response window is at risk, check against:
 | New issue | First response ≤ 5 business days |
 | Open PR, no review | First comment ≤ 7 business days |
 | Contributor asks for update | Reply ≤ 3 business days |
-| `status: needs-info` labeled | Close if no response after 7 days |
+| `status: needs-info` labeled | Warning at 7 days, close at 14 days |
+| `status: rebase` labeled | Warning at 7 days, close at 14 days |
 
 A window is "at risk" when 80% of the target has elapsed. Surface as a flag, not an alarm.
