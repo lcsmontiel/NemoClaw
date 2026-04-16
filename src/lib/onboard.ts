@@ -3243,12 +3243,12 @@ async function setupNim(gpu) {
   // Detect local inference options
   const hasOllama = !!runCapture("command -v ollama", { ignoreError: true });
   const ollamaRunning = !!runCapture(
-    `curl -sf http://localhost:${OLLAMA_PORT}/api/tags 2>/dev/null`,
+    `curl -sf http://127.0.0.1:${OLLAMA_PORT}/api/tags 2>/dev/null`,
     {
       ignoreError: true,
     },
   );
-  const vllmRunning = !!runCapture(`curl -sf http://localhost:${VLLM_PORT}/v1/models 2>/dev/null`, {
+  const vllmRunning = !!runCapture(`curl -sf http://127.0.0.1:${VLLM_PORT}/v1/models 2>/dev/null`, {
     ignoreError: true,
   });
   const requestedProvider = isNonInteractive() ? getNonInteractiveProvider() : null;
@@ -3821,7 +3821,7 @@ async function setupNim(gpu) {
         endpointUrl = getLocalProviderBaseUrl(provider);
         // Query vLLM for the actual model ID
         const vllmModelsRaw = runCapture(
-          `curl -sf http://localhost:${VLLM_PORT}/v1/models 2>/dev/null`,
+          `curl -sf http://127.0.0.1:${VLLM_PORT}/v1/models 2>/dev/null`,
           {
             ignoreError: true,
           },
