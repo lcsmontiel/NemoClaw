@@ -60,7 +60,13 @@ RUN set -eu; \
         echo "INFO: OpenClaw $CUR_VER is current (>= $MIN_VER), no upgrade needed"; \
     else \
         echo "INFO: Base image has OpenClaw $CUR_VER, upgrading to $MIN_VER (minimum required)"; \
-        npm install -g "openclaw@${MIN_VER}"; \
+        # npm 10's atomic-move install can hit EROFS on overlayfs when the
+        # prior install spans multiple image layers (e.g. openclaw was
+        # baked into sandbox-base, then we upgrade on top here). Clearing
+        # at the shell level first gives npm a clean slate and avoids the
+        # rmdir failure inside npm's own install path.
+        rm -rf /usr/local/lib/node_modules/openclaw /usr/local/bin/openclaw; \
+        npm install -g --no-audit --no-fund --no-progress "openclaw@${MIN_VER}"; \
     fi
 
 # Patch OpenClaw media fetch for proxy-only sandbox (NVIDIA/NemoClaw#1755).
