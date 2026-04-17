@@ -42,7 +42,7 @@ const registry = require("./lib/registry");
 const nim = require("./lib/nim");
 const policies = require("./lib/policies");
 const { parseGatewayInference } = require("./lib/inference-config");
-const { probeProviderHealth } = require("./lib/inference-health");
+const { probeLocalProviderHealth } = require("./lib/local-inference");
 const { getVersion } = require("./lib/version");
 const onboardSession = require("./lib/onboard-session");
 const { parseLiveSandboxNames } = require("./lib/runtime-recovery");
@@ -1172,25 +1172,19 @@ async function sandboxStatus(sandboxName) {
   );
   const currentModel = (live && live.model) || (sb && sb.model) || "unknown";
   const currentProvider = (live && live.provider) || (sb && sb.provider) || "unknown";
-  const inferenceHealth =
-    typeof currentProvider === "string" ? probeProviderHealth(currentProvider) : null;
+  const localInferenceHealth =
+    typeof currentProvider === "string" ? probeLocalProviderHealth(currentProvider) : null;
   if (sb) {
     console.log("");
     console.log(`  Sandbox: ${sb.name}`);
     console.log(`    Model:    ${currentModel}`);
     console.log(`    Provider: ${currentProvider}`);
-    if (inferenceHealth) {
-      if (!inferenceHealth.probed) {
-        console.log(`    Inference: ${D}not probed${R} (${inferenceHealth.detail})`);
-      } else if (inferenceHealth.ok) {
-        console.log(
-          `    Inference: ${G}healthy${R} (${inferenceHealth.endpoint})`,
-        );
-      } else {
-        console.log(
-          `    Inference: ${_RD}unreachable${R} (${inferenceHealth.endpoint})`,
-        );
-        console.log(`      ${inferenceHealth.detail}`);
+    if (localInferenceHealth) {
+      console.log(
+        `    Inference: ${localInferenceHealth.ok ? `${G}healthy${R}` : `${_RD}unreachable${R}`} (${localInferenceHealth.endpoint})`,
+      );
+      if (!localInferenceHealth.ok) {
+        console.log(`      ${localInferenceHealth.detail}`);
       }
     }
     console.log(`    GPU:      ${sb.gpuEnabled ? "yes" : "no"}`);
