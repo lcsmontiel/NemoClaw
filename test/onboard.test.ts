@@ -1504,6 +1504,10 @@ runner.run = (command, opts = {}) => {
   commands.push({ command, env: opts.env || null });
   return { status: 0 };
 };
+runner.runFile = (file, args = [], opts = {}) => {
+  commands.push({ type: "runFile", command: [file, ...args].join(" "), file, args, env: opts.env || null });
+  return { status: 0 };
+};
 runner.runCapture = (command) => {
   if (command.includes("inference") && command.includes("get")) {
     return [
@@ -1821,6 +1825,10 @@ runner.run = (command, opts = {}) => {
   commands.push({ command, env: opts.env || null });
   return { status: 0 };
 };
+runner.runFile = (file, args = [], opts = {}) => {
+  commands.push({ type: "runFile", command: [file, ...args].join(" "), file, args, env: opts.env || null });
+  return { status: 0 };
+};
 runner.runCapture = (command) => {
   if (command.includes("inference") && command.includes("get")) {
     return [
@@ -2073,7 +2081,7 @@ const { setupInference } = require(${onboardPath});
 
     assert.match(
       source,
-      /startRecordedStep\("sandbox", \{ sandboxName, provider, model \}\);\s*selectedMessagingChannels = await setupMessagingChannels\(\);\s*onboardSession\.updateSession\(\(current\) => \{\s*current\.messagingChannels = selectedMessagingChannels;\s*return current;\s*\}\);\s*sandboxName = await createSandbox\(\s*gpu,\s*model,\s*provider,\s*preferredInferenceApi,\s*sandboxName,\s*webSearchConfig,\s*selectedMessagingChannels,\s*fromDockerfile,\s*agent,\s*dangerouslySkipPermissions,\s*\);/,
+      /startRecordedStep\("sandbox", \{ sandboxName, provider, model \}\);\s*selectedMessagingChannels = await setupMessagingChannels\(\);\s*onboardSession\.updateSession\(\(current\) => \{\s*current\.messagingChannels = selectedMessagingChannels;\s*return current;\s*\}\);\s*sandboxName = await createSandbox\(\s*gpu,\s*model,\s*provider,\s*preferredInferenceApi,\s*sandboxName,\s*nextWebSearchConfig,\s*selectedMessagingChannels,\s*fromDockerfile,\s*agent,\s*dangerouslySkipPermissions,\s*\);/,
     );
   });
 
@@ -2147,6 +2155,10 @@ const credentials = require(${credentialsPath});
 const commands = [];
 runner.run = (command, opts = {}) => {
   commands.push({ command, env: opts.env || null });
+  return { status: 0 };
+};
+runner.runFile = (file, args = [], opts = {}) => {
+  commands.push({ type: "runFile", command: [file, ...args].join(" "), file, args, env: opts.env || null });
   return { status: 0 };
 };
 runner.runCapture = (command) => {
@@ -2277,10 +2289,14 @@ runner.run = (command, opts = {}) => {
   commands.push({ command, env: opts.env || null });
   return { status: 0 };
 };
+runner.runFile = (file, args = [], opts = {}) => {
+  commands.push({ type: "runFile", command: [file, ...args].join(" "), file, args, env: opts.env || null });
+  return { status: 0 };
+};
 runner.runCapture = (command) => {
   if (command.includes("'sandbox' 'get' 'my-assistant'")) return "";
   if (command.includes("'sandbox' 'list'")) return "my-assistant Ready";
-  if (command.includes("sandbox exec 'my-assistant' curl -sf http://localhost:18789/")) return "ok";
+  if (command.includes("'sandbox' 'exec' 'my-assistant' 'curl' '-sf' 'http://localhost:18789/'")) return "ok";
   if (command.includes("'forward' 'list'")) return "18789 -> my-assistant:18789";
   return "";
 };
@@ -2384,10 +2400,14 @@ runner.run = (command, opts = {}) => {
   commands.push({ command, env: opts.env || null });
   return { status: 0 };
 };
+runner.runFile = (file, args = [], opts = {}) => {
+  commands.push({ type: "runFile", command: [file, ...args].join(" "), file, args, env: opts.env || null });
+  return { status: 0 };
+};
 runner.runCapture = (command) => {
   if (command.includes("'sandbox' 'get' 'my-assistant'")) return "";
   if (command.includes("'sandbox' 'list'")) return "my-assistant Ready";
-  if (command.includes("sandbox exec 'my-assistant' curl -sf http://localhost:18789/")) return "ok";
+  if (command.includes("'sandbox' 'exec' 'my-assistant' 'curl' '-sf' 'http://localhost:18789/'")) return "ok";
   if (command.includes("'forward' 'list'")) return "18789 -> my-assistant:18789";
   return "";
 };
@@ -2468,16 +2488,25 @@ const childProcess = require("node:child_process");
 const { EventEmitter } = require("node:events");
 
 const commands = [];
+const _n = (command) =>
+  Array.isArray(command)
+    ? command.map((part) => "'" + String(part) + "'").join(" ")
+    : String(command);
 runner.run = (command, opts = {}) => {
-  commands.push({ command, env: opts.env || null });
+  commands.push({ command: _n(command), env: opts.env || null });
+  return { status: 0 };
+};
+runner.runFile = (file, args = [], opts = {}) => {
+  commands.push({ command: _n([file, ...args]), env: opts.env || null });
   return { status: 0 };
 };
 runner.runCapture = (command) => {
-  if (command.includes("'sandbox' 'get' 'my-assistant'")) return "";
-  if (command.includes("'sandbox' 'list'")) return "my-assistant Ready";
+  const normalized = _n(command);
+  if (normalized.includes("'sandbox' 'get' 'my-assistant'")) return "";
+  if (normalized.includes("'sandbox' 'list'")) return "my-assistant Ready";
   // Custom port: dashboard readiness curl uses 19000 (DASHBOARD_PORT from env)
-  if (command.includes("sandbox exec 'my-assistant' curl -sf http://localhost:19000/")) return "ok";
-  if (command.includes("'forward' 'list'")) return "19000 -> my-assistant:19000";
+  if (normalized.includes("'sandbox' 'exec' 'my-assistant' 'curl' '-sf' 'http://localhost:19000/'")) return "ok";
+  if (normalized.includes("'forward' 'list'")) return "19000 -> my-assistant:19000";
   return "";
 };
 registry.registerSandbox = () => true;
@@ -2602,12 +2631,16 @@ runner.run = (command, opts = {}) => {
   if (command.includes("'provider' 'get'")) return { status: 1 };
   return { status: 0 };
 };
+runner.runFile = (file, args = [], opts = {}) => {
+  commands.push({ type: "runFile", command: [file, ...args].join(" "), file, args, env: opts.env || null });
+  return { status: 0 };
+};
 runner.runCapture = (command) => {
   if (command.includes("'sandbox' 'get' 'my-assistant'")) return "";
   if (command.includes("'sandbox' 'list'")) return "my-assistant Ready";
   if (command.includes("'provider' 'get'")) return "Provider: discord-bridge";
   if (command.includes("'forward' 'list'")) return "18789 -> my-assistant:18789";
-  if (command.includes("sandbox exec") && command.includes("curl")) return "ok";
+  if (command.includes("'sandbox' 'exec'") && command.includes("'curl'")) return "ok";
   return "";
 };
 registry.registerSandbox = () => true;
@@ -2769,6 +2802,7 @@ runner.run = (command, opts = {}) => {
   }
   return { status: 0 };
 };
+runner.runFile = () => ({ status: 0 });
 runner.runCapture = (command) => {
   if (command.includes("'sandbox' 'get'")) return "";
   if (command.includes("'sandbox' 'list'")) return "";
@@ -2836,6 +2870,10 @@ const registry = require(${registryPath});
 const commands = [];
 runner.run = (command, opts = {}) => {
   commands.push({ command, env: opts.env || null });
+  return { status: 0 };
+};
+runner.runFile = (file, args = [], opts = {}) => {
+  commands.push({ type: "runFile", command: [file, ...args].join(" "), file, args, env: opts.env || null });
   return { status: 0 };
 };
 runner.runCapture = (command) => {
@@ -3020,11 +3058,15 @@ runner.run = (command, opts = {}) => {
   commands.push({ command, env: opts.env || null });
   return { status: 0 };
 };
+runner.runFile = (file, args = [], opts = {}) => {
+  commands.push({ type: "runFile", command: [file, ...args].join(" "), file, args, env: opts.env || null });
+  return { status: 0 };
+};
 runner.runCapture = (command) => {
   if (command.includes("'sandbox' 'get' 'my-assistant'")) return "my-assistant";
   if (command.includes("'sandbox' 'list'")) return "my-assistant Ready";
   if (command.includes("'forward' 'list'")) return "";
-  if (command.includes("sandbox exec") && command.includes("curl")) return "ok";
+  if (command.includes("'sandbox' 'exec'") && command.includes("'curl'")) return "ok";
   return "";
 };
 registry.getSandbox = () => ({ name: "my-assistant", gpuEnabled: false });
@@ -3233,6 +3275,10 @@ runner.run = (command, opts = {}) => {
   commands.push({ command, env: opts.env || null });
   return { status: 0 };
 };
+runner.runFile = (file, args = [], opts = {}) => {
+  commands.push({ type: "runFile", command: [file, ...args].join(" "), file, args, env: opts.env || null });
+  return { status: 0 };
+};
 runner.runCapture = (command) => {
   if (command.includes("'sandbox' 'get' 'my-assistant'")) return "my-assistant";
   if (command.includes("'sandbox' 'list'")) return "my-assistant Ready";
@@ -3329,11 +3375,15 @@ runner.run = (command, opts = {}) => {
   commands.push({ command, env: opts.env || null });
   return { status: 0 };
 };
+runner.runFile = (file, args = [], opts = {}) => {
+  commands.push({ type: "runFile", command: [file, ...args].join(" "), file, args, env: opts.env || null });
+  return { status: 0 };
+};
 runner.runCapture = (command) => {
   if (command.includes("'sandbox' 'get' 'my-assistant'")) return "my-assistant";
   if (command.includes("'sandbox' 'list'")) return "my-assistant Ready";
   if (command.includes("'forward' 'list'")) return "";
-  if (command.includes("sandbox exec") && command.includes("curl")) return "ok";
+  if (command.includes("'sandbox' 'exec'") && command.includes("'curl'")) return "ok";
   return "";
 };
 registry.getSandbox = () => ({ name: "my-assistant", gpuEnabled: false });
@@ -3444,6 +3494,10 @@ runner.run = (command, opts = {}) => {
   if (command.includes("'sandbox' 'delete'")) sandboxDeleted = true;
   return { status: 0 };
 };
+runner.runFile = (file, args = [], opts = {}) => {
+  commands.push({ type: "runFile", command: [file, ...args].join(" "), file, args, env: opts.env || null });
+  return { status: 0 };
+};
 runner.runCapture = (command) => {
   // Existing sandbox that is NOT ready initially, becomes Ready after recreation
   if (command.includes("'sandbox' 'get' 'my-assistant'")) return "my-assistant";
@@ -3451,7 +3505,7 @@ runner.runCapture = (command) => {
     return sandboxDeleted ? "my-assistant Ready" : "my-assistant NotReady";
   }
   if (command.includes("'forward' 'list'")) return "";
-  if (command.includes("sandbox exec") && command.includes("curl")) return "ok";
+  if (command.includes("'sandbox' 'exec'") && command.includes("'curl'")) return "ok";
   return "";
 };
 registry.getSandbox = () => ({ name: "my-assistant", gpuEnabled: false });
@@ -4138,13 +4192,17 @@ runner.run = (command, opts = {}) => {
   commands.push({ command, env: opts.env || null });
   return { status: 0 };
 };
+runner.runFile = (file, args = [], opts = {}) => {
+  commands.push({ type: "runFile", command: [file, ...args].join(" "), file, args, env: opts.env || null });
+  return { status: 0 };
+};
 runner.runCapture = (command) => {
   if (command.includes("'sandbox' 'get' 'my-assistant'")) return "";
   if (command.includes("'sandbox' 'list'")) {
     sandboxListCalls += 1;
     return sandboxListCalls >= 2 ? "my-assistant Ready" : "my-assistant Pending";
   }
-  if (command.includes("sandbox exec 'my-assistant' curl -sf http://localhost:18789/")) return "ok";
+  if (command.includes("'sandbox' 'exec' 'my-assistant' 'curl' '-sf' 'http://localhost:18789/'")) return "ok";
   if (command.includes("'forward' 'list'")) return "18789 -> my-assistant:18789";
   return "";
 };
@@ -4248,6 +4306,10 @@ const registry = require(${registryPath});
 const commands = [];
 runner.run = (command, opts = {}) => {
   commands.push({ command, env: opts.env || null });
+  return { status: 0 };
+};
+runner.runFile = (file, args = [], opts = {}) => {
+  commands.push({ type: "runFile", command: [file, ...args].join(" "), file, args, env: opts.env || null });
   return { status: 0 };
 };
 runner.runCapture = (command) => {
@@ -4371,6 +4433,10 @@ runner.run = (command, opts = {}) => {
   commands.push({ command, env: opts.env || null });
   return { status: 0 };
 };
+runner.runFile = (file, args = [], opts = {}) => {
+  commands.push({ type: "runFile", command: [file, ...args].join(" "), file, args, env: opts.env || null });
+  return { status: 0 };
+};
 runner.runCapture = (command) => {
   if (command.includes("inference") && command.includes("get")) {
     return [
@@ -4440,6 +4506,10 @@ const registry = require(${registryPath});
 const commands = [];
 runner.run = (command, opts = {}) => {
   commands.push({ command, env: opts.env || null });
+  return { status: 0 };
+};
+runner.runFile = (file, args = [], opts = {}) => {
+  commands.push({ type: "runFile", command: [file, ...args].join(" "), file, args, env: opts.env || null });
   return { status: 0 };
 };
 runner.runCapture = (command) => {
@@ -4526,10 +4596,14 @@ runner.run = (command, opts = {}) => {
   if (command.includes("'provider' 'get'")) return { status: 1 };
   return { status: 0 };
 };
+runner.runFile = (file, args = [], opts = {}) => {
+  commands.push({ type: "runFile", command: [file, ...args].join(" "), file, args, env: opts.env || null });
+  return { status: 0 };
+};
 runner.runCapture = (command) => {
   if (command.includes("'sandbox' 'get' 'my-assistant'")) return "";
   if (command.includes("'sandbox' 'list'")) return "my-assistant Ready";
-  if (command.includes("sandbox exec 'my-assistant' curl -sf http://localhost:18789/")) return "ok";
+  if (command.includes("'sandbox' 'exec' 'my-assistant' 'curl' '-sf' 'http://localhost:18789/'")) return "ok";
   if (command.includes("'forward' 'list'")) return "18789 -> my-assistant:18789";
   return "";
 };
@@ -4653,10 +4727,14 @@ runner.run = (command, opts = {}) => {
   commands.push({ command, env: opts.env || null });
   return { status: 0 };
 };
+runner.runFile = (file, args = [], opts = {}) => {
+  commands.push({ type: "runFile", command: [file, ...args].join(" "), file, args, env: opts.env || null });
+  return { status: 0 };
+};
 runner.runCapture = (command) => {
   if (command.includes("'sandbox' 'get' 'my-assistant'")) return "";
   if (command.includes("'sandbox' 'list'")) return "my-assistant Ready";
-  if (command.includes("sandbox exec 'my-assistant' curl -sf http://localhost:18789/")) return "ok";
+  if (command.includes("'sandbox' 'exec' 'my-assistant' 'curl' '-sf' 'http://localhost:18789/'")) return "ok";
   if (command.includes("'forward' 'list'")) return "18789 -> my-assistant:18789";
   return "";
 };
@@ -4925,10 +5003,14 @@ runner.run = (command, opts = {}) => {
   commands.push({ command, env: opts.env || null });
   return { status: 0 };
 };
+runner.runFile = (file, args = [], opts = {}) => {
+  commands.push({ type: "runFile", command: [file, ...args].join(" "), file, args, env: opts.env || null });
+  return { status: 0 };
+};
 runner.runCapture = (command) => {
   if (command.includes("'sandbox' 'get' 'my-assistant'")) return "";
   if (command.includes("'sandbox' 'list'")) return "my-assistant Ready";
-  if (command.includes("sandbox exec 'my-assistant' curl -sf http://localhost:18789/")) return "ok";
+  if (command.includes("'sandbox' 'exec' 'my-assistant' 'curl' '-sf' 'http://localhost:18789/'")) return "ok";
   if (command.includes("'forward' 'list'")) return "18789 -> my-assistant:18789";
   return "";
 };

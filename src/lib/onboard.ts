@@ -20,14 +20,13 @@ function envInt(name, fallback) {
   const n = Number(raw);
   return Number.isFinite(n) ? Math.max(0, Math.round(n)) : fallback;
 }
-
 /** Inference timeout (seconds) for local providers (Ollama, vLLM, NIM). */
 const LOCAL_INFERENCE_TIMEOUT_SECS = envInt("NEMOCLAW_LOCAL_INFERENCE_TIMEOUT", 180);
 
 /** Strip ANSI escape sequences before printing process output to the terminal.
  *  Covers CSI (color, erase, cursor), OSC, and C1 two-byte escapes per ECMA-48. */
 const ANSI_RE = /\x1B(?:\[[0-?]*[ -/]*[@-~]|\][^\x07]*(?:\x07|\x1B\\)|[@-_])/g;
-const { ROOT, SCRIPTS, redact, run, runCapture, shellQuote } = require("./runner");
+const { ROOT, SCRIPTS, redact, run, runCapture, runFile, shellQuote, validateName } = require("./runner");
 const { stageOptimizedSandboxBuildContext } = require("./sandbox-build-context");
 const { buildSubprocessEnv } = require("./subprocess-env");
 const { DASHBOARD_PORT, GATEWAY_PORT, VLLM_PORT, OLLAMA_PORT, OLLAMA_PROXY_PORT } = require("./ports");
@@ -1039,12 +1038,18 @@ async function promptBraveSearchApiKey() {
   }
 }
 
-async function ensureValidatedBraveSearchCredential() {
-  let apiKey = getCredential(webSearch.BRAVE_API_KEY_ENV);
-  let usingSavedKey = Boolean(apiKey);
+async function ensureValidatedBraveSearchCredential(nonInteractive = isNonInteractive()) {
+  const savedApiKey = getCredential(webSearch.BRAVE_API_KEY_ENV);
+  let apiKey = savedApiKey || normalizeCredentialValue(process.env[webSearch.BRAVE_API_KEY_ENV]);
+  let usingSavedKey = Boolean(savedApiKey);
 
   while (true) {
     if (!apiKey) {
+      if (nonInteractive) {
+        throw new Error(
+          "Brave Search requires BRAVE_API_KEY or a saved Brave Search credential in non-interactive mode.",
+        );
+      }
       apiKey = await promptBraveSearchApiKey();
       usingSavedKey = false;
     }
@@ -1062,6 +1067,13 @@ async function ensureValidatedBraveSearchCredential() {
     console.error(prefix);
     if (validation.message) {
       console.error(`  ${validation.message}`);
+    }
+
+    if (nonInteractive) {
+      throw new Error(
+        validation.message ||
+          "Brave Search API key validation failed in non-interactive mode.",
+      );
     }
 
     const action = await promptBraveSearchRecovery(validation);
@@ -2829,11 +2841,10 @@ async function promptValidatedSandboxName() {
       "NEMOCLAW_SANDBOX_NAME",
       "my-assistant",
     );
-    const sandboxName = (nameAnswer || "my-assistant").trim().toLowerCase();
+    const sandboxName = (nameAnswer || "my-assistant").trim();
 
-    // Validate: RFC 1123 subdomain — lowercase alphanumeric and hyphens,
-    // must start with a letter (not a digit) to satisfy Kubernetes naming.
-    if (/^[a-z]([a-z0-9-]*[a-z0-9])?$/.test(sandboxName)) {
+    try {
+      const validatedSandboxName = validateName(sandboxName, "sandbox name");
       // Reject names that collide with global CLI commands.
       // A sandbox named 'status' makes 'nemoclaw status connect' route to
       // the global status command instead of the sandbox.
@@ -2862,10 +2873,11 @@ async function promptValidatedSandboxName() {
         }
         continue;
       }
-      return sandboxName;
+      return validatedSandboxName;
+    } catch (error) {
+      console.error(`  ${error.message}`);
     }
 
-    console.error(`  Invalid sandbox name: '${sandboxName}'`);
     if (/^[0-9]/.test(sandboxName)) {
       console.error("  Names must start with a letter, not a digit.");
     } else {
@@ -2905,7 +2917,10 @@ async function createSandbox(
 ) {
   step(6, 8, "Creating sandbox");
 
-  const sandboxName = sandboxNameOverride || (await promptValidatedSandboxName());
+  const sandboxName = validateName(
+    sandboxNameOverride ?? (await promptValidatedSandboxName()),
+    "sandbox name",
+  );
   const effectivePort = agent ? agent.forwardPort : CONTROL_UI_PORT;
   const chatUiUrl = process.env.CHAT_UI_URL || `http://127.0.0.1:${effectivePort}`;
 
@@ -3455,11 +3470,11 @@ async function createSandbox(
   // or seeing 502/503 errors during initial load.
   console.log("  Waiting for NemoClaw dashboard to become ready...");
   for (let i = 0; i < 15; i++) {
-    const readyMatch = runCapture(
-      `openshell sandbox exec ${shellQuote(sandboxName)} curl -sf http://localhost:${DASHBOARD_PORT}/ 2>/dev/null || echo "no"`,
+    const readyMatch = runCaptureOpenshell(
+      ["sandbox", "exec", sandboxName, "curl", "-sf", `http://localhost:${CONTROL_UI_PORT}/`],
       { ignoreError: true },
     );
-    if (readyMatch && !readyMatch.includes("no")) {
+    if (readyMatch) {
       console.log("  ✓ Dashboard is live");
       break;
     }
@@ -3515,10 +3530,9 @@ async function createSandbox(
   // DNS proxy — run a forwarder in the sandbox pod so the isolated
   // sandbox namespace can resolve hostnames (fixes #626).
   console.log("  Setting up sandbox DNS proxy...");
-  run(
-    `bash "${path.join(SCRIPTS, "setup-dns-proxy.sh")}" ${shellQuote(GATEWAY_NAME)} ${shellQuote(sandboxName)} 2>&1 || true`,
-    { ignoreError: true },
-  );
+  runFile("bash", [path.join(SCRIPTS, "setup-dns-proxy.sh"), GATEWAY_NAME, sandboxName], {
+    ignoreError: true,
+  });
 
   // Check that messaging providers exist in the gateway (sandbox attachment
   // cannot be verified via CLI yet — only gateway-level existence is checked).
@@ -6065,31 +6079,6 @@ async function onboard(opts = {}) {
       break;
     }
 
-    if (webSearchConfig) {
-      note("  [resume] Revalidating Brave Search configuration.");
-      const braveApiKey = await ensureValidatedBraveSearchCredential();
-      if (braveApiKey) {
-        webSearchConfig = { fetchEnabled: true };
-        onboardSession.updateSession((current) => {
-          current.webSearchConfig = webSearchConfig;
-          return current;
-        });
-        note("  [resume] Reusing Brave Search configuration.");
-      } else {
-        webSearchConfig = await configureWebSearch(null);
-        onboardSession.updateSession((current) => {
-          current.webSearchConfig = webSearchConfig;
-          return current;
-        });
-      }
-    } else {
-      webSearchConfig = await configureWebSearch(webSearchConfig);
-      onboardSession.updateSession((current) => {
-        current.webSearchConfig = webSearchConfig;
-        return current;
-      });
-    }
-
     const sandboxReuseState = getSandboxReuseState(sandboxName);
     const webSearchConfigChanged = Boolean(session?.webSearchConfig) !== Boolean(webSearchConfig);
     const resumeSandbox =
@@ -6098,6 +6087,9 @@ async function onboard(opts = {}) {
       session?.steps?.sandbox?.status === "complete" &&
       sandboxReuseState === "ready";
     if (resumeSandbox) {
+      if (webSearchConfig) {
+        note("  [resume] Reusing Brave Search configuration already baked into the sandbox.");
+      }
       skippedStepMessage("sandbox", sandboxName);
     } else {
       if (resume && session?.steps?.sandbox?.status === "complete") {
@@ -6118,6 +6110,17 @@ async function onboard(opts = {}) {
           }
         }
       }
+      let nextWebSearchConfig = webSearchConfig;
+      if (nextWebSearchConfig) {
+        note("  [resume] Revalidating Brave Search configuration for sandbox recreation.");
+        const braveApiKey = await ensureValidatedBraveSearchCredential();
+        nextWebSearchConfig = braveApiKey ? { fetchEnabled: true } : null;
+        if (nextWebSearchConfig) {
+          note("  [resume] Reusing Brave Search configuration.");
+        }
+      } else {
+        nextWebSearchConfig = await configureWebSearch(null);
+      }
       startRecordedStep("sandbox", { sandboxName, provider, model });
       selectedMessagingChannels = await setupMessagingChannels();
       onboardSession.updateSession((current) => {
@@ -6130,17 +6133,24 @@ async function onboard(opts = {}) {
         provider,
         preferredInferenceApi,
         sandboxName,
-        webSearchConfig,
+        nextWebSearchConfig,
         selectedMessagingChannels,
         fromDockerfile,
         agent,
         dangerouslySkipPermissions,
       );
+      webSearchConfig = nextWebSearchConfig;
       // Persist model and provider after the sandbox entry exists in the registry.
       // updateSandbox() silently no-ops when the entry is missing, so this must
       // run after createSandbox() / registerSandbox() — not before. Fixes #1881.
       registry.updateSandbox(sandboxName, { model, provider });
-      onboardSession.markStepComplete("sandbox", { sandboxName, provider, model, nimContainer });
+      onboardSession.markStepComplete("sandbox", {
+        sandboxName,
+        provider,
+        model,
+        nimContainer,
+        webSearchConfig,
+      });
     }
 
     if (agent) {
@@ -6241,7 +6251,9 @@ module.exports = {
   compactText,
   copyBuildContextDir,
   classifySandboxCreateFailure,
+  configureWebSearch,
   createSandbox,
+  ensureValidatedBraveSearchCredential,
   formatEnvAssignment,
   getFutureShellPathHint,
   getGatewayStartEnv,
