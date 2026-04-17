@@ -3796,7 +3796,7 @@ console.log(JSON.stringify({
     assert.equal(payload.missing, null, "should return null when credential is not stored");
   });
 
-  it("checkTelegramReachability warns on network failure (curl exit 52)", () => {
+  it("checkTelegramReachability aborts in non-interactive mode on network failure (curl exit 52)", () => {
     const repoRoot = path.join(import.meta.dirname, "..");
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-telegram-net-"));
     const fakeBin = path.join(tmpDir, "bin");
@@ -3822,12 +3822,7 @@ httpProbe.runCurlProbe = () => ({
 process.env.NEMOCLAW_NON_INTERACTIVE = "1";
 const { checkTelegramReachability } = require(${onboardPath});
 (async () => {
-  const logs = [];
-  const origLog = console.log;
-  console.log = (...args) => logs.push(args.join(" "));
   await checkTelegramReachability("fake-token");
-  console.log = origLog;
-  origLog(JSON.stringify({ logs }));
 })();
 `;
     fs.writeFileSync(scriptPath, script);
@@ -3838,11 +3833,10 @@ const { checkTelegramReachability } = require(${onboardPath});
       env: { ...process.env, HOME: tmpDir, PATH: `${fakeBin}:${process.env.PATH || ""}` },
     });
 
-    assert.equal(result.status, 0, result.stderr);
-    const payload = JSON.parse(result.stdout.trim().split("\n").pop());
+    assert.equal(result.status, 1, "should exit with code 1 in non-interactive mode");
     assert.ok(
-      payload.logs.some((l) => l.includes("api.telegram.org is not reachable")),
-      "should warn about unreachable Telegram API",
+      result.stderr.includes("Aborting onboarding in non-interactive mode"),
+      "should print abort message to stderr",
     );
   });
 

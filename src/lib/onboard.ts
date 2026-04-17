@@ -4440,7 +4440,10 @@ async function checkTelegramReachability(token) {
     console.log("    Telegram integration requires outbound HTTPS access to api.telegram.org.");
     console.log("    This is commonly blocked by corporate network proxies.");
 
-    if (!isNonInteractive()) {
+    if (isNonInteractive()) {
+      console.error("  Aborting onboarding in non-interactive mode due to Telegram network reachability failure.");
+      process.exit(1);
+    } else {
       const answer = (await promptOrDefault("    Continue anyway? [y/N]: ", null, "n"))
         .trim()
         .toLowerCase();
@@ -4452,11 +4455,13 @@ async function checkTelegramReachability(token) {
     return;
   }
 
-  // Unexpected HTTP error — warn but don't block.
+  // Unexpected probe failure — warn but don't block.
   if (!result.ok && result.httpStatus > 0) {
     console.log(
       `  ⚠ Telegram API returned HTTP ${result.httpStatus} — the bot may not work correctly.`,
     );
+  } else if (!result.ok) {
+    console.log(`  ⚠ Telegram reachability probe failed: ${result.message}`);
   }
 }
 
