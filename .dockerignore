@@ -47,7 +47,3 @@ secrets.json
 secrets.yaml
 service-account*.json
 token.json
-
-# Project-specific sensitive directories
-.nemoclaw-maintainer/
-DRAFT-*.md
