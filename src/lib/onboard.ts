@@ -381,14 +381,26 @@ function streamGatewayStart(command, env = process.env) {
   }, 5000);
   heartbeatTimer.unref?.();
 
+  // Hard timeout to prevent indefinite hangs if the openshell process
+  // never exits (e.g. Docker daemon unresponsive, k3s restart loop). (#1830)
+  const GATEWAY_START_TIMEOUT = envInt("NEMOCLAW_GATEWAY_START_TIMEOUT", 600) * 1000;
+  const killTimer = setTimeout(() => {
+    lines.push("[NemoClaw] Gateway start timed out — killing process.");
+    child.kill("SIGTERM");
+    finish({ status: 1, output: lines.join("\n") });
+  }, GATEWAY_START_TIMEOUT);
+  killTimer.unref?.();
+
   return new Promise((resolve) => {
     resolvePromise = resolve;
     child.on("error", (error) => {
+      clearTimeout(killTimer);
       const detail = error?.message || String(error);
       lines.push(detail);
       finish({ status: 1, output: lines.join("\n") });
     });
     child.on("close", (code) => {
+      clearTimeout(killTimer);
       finish({ status: code ?? 1, output: lines.join("\n") });
     });
   });
@@ -2595,8 +2607,11 @@ async function startGatewayWithOptions(_gpu, { exitOnFailure = true } = {}) {
 
         // ARM64 (e.g. Raspberry Pi) needs more time: k3s takes 90-180s to init
         const isArm64 = process.arch === "arm64";
-        const healthPollCount = envInt("NEMOCLAW_HEALTH_POLL_COUNT", isArm64 ? 30 : 5);
-        const healthPollInterval = envInt("NEMOCLAW_HEALTH_POLL_INTERVAL", isArm64 ? 10 : 2);
+        // After openshell gateway start returns (container HEALTHY at Layer 1),
+        // poll application-layer connectivity (Layer 2: gRPC, TLS, port mapping).
+        // 60s default gives enough buffer for gRPC init and TLS handshake. (#1830)
+        const healthPollCount = envInt("NEMOCLAW_HEALTH_POLL_COUNT", isArm64 ? 30 : 12);
+        const healthPollInterval = envInt("NEMOCLAW_HEALTH_POLL_INTERVAL", isArm64 ? 10 : 5);
         for (let i = 0; i < healthPollCount; i++) {
           // Ensure the gateway is selected before each probe (non-TTY environments
           // like ARM64 may not have it selected automatically)
