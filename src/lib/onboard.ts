@@ -118,6 +118,40 @@ const RESET = USE_COLOR ? "\x1b[0m" : "";
 let OPENSHELL_BIN = null;
 const GATEWAY_NAME = "nemoclaw";
 const BACK_TO_SELECTION = "__NEMOCLAW_BACK_TO_SELECTION__";
+
+/**
+ * Probe whether the gateway Docker container is actually running.
+ * openshell CLI metadata can be stale after a manual `docker rm`, so this
+ * verifies the container is live before trusting a "healthy" reuse state.
+ *
+ * Returns "running" | "missing" | "unknown".
+ * - "running"  — container exists and State.Running is true
+ * - "missing"  — container was removed or exists but is stopped (not reusable)
+ * - "unknown"  — any other failure (daemon down, timeout, etc.)
+ *
+ * Callers should only trigger stale-metadata cleanup on "missing", not on
+ * "unknown", to avoid destroying a healthy gateway when Docker is temporarily
+ * unavailable.  See #2020.
+ */
+function verifyGatewayContainerRunning() {
+  const containerName = `openshell-cluster-${GATEWAY_NAME}`;
+  const result = run(
+    `docker inspect --type container --format '{{.State.Running}}' ${containerName}`,
+    { ignoreError: true, suppressOutput: true },
+  );
+  if (result.status === 0 && (result.stdout || "").trim() === "true") {
+    return "running";
+  }
+  // Container exists but is stopped (exit 0, Running !== "true")
+  if (result.status === 0) {
+    return "missing";
+  }
+  const stderr = (result.stderr || "").toString();
+  if (stderr.includes("No such object") || stderr.includes("No such container")) {
+    return "missing";
+  }
+  return "unknown";
+}
 const OPENCLAW_LAUNCH_AGENT_PLIST = "~/Library/LaunchAgents/ai.openclaw.gateway.plist";
 
 const BUILD_ENDPOINT_URL = "https://integrate.api.nvidia.com/v1";
@@ -269,6 +303,7 @@ function repairRecordedSandbox(sandboxName) {
 
 const { streamSandboxCreate } = sandboxCreateStream;
 
+/** Spawn `openshell gateway start` and stream its output with progress heartbeats. */
 function streamGatewayStart(command, env = process.env) {
   const child = spawn("bash", ["-lc", command], {
     cwd: ROOT,
@@ -381,15 +416,35 @@ function streamGatewayStart(command, env = process.env) {
   }, 5000);
   heartbeatTimer.unref?.();
 
+  // Hard timeout to prevent indefinite hangs if the openshell process
+  // never exits (e.g. Docker daemon unresponsive, k3s restart loop). (#1830)
+  // On timeout, send SIGTERM and let the `close` event resolve the promise
+  // so the child has actually exited before the caller proceeds to retry.
+  const GATEWAY_START_TIMEOUT = envInt("NEMOCLAW_GATEWAY_START_TIMEOUT", 600) * 1000;
+  let killedByTimeout = false;
+  const killTimer = setTimeout(() => {
+    killedByTimeout = true;
+    lines.push("[NemoClaw] Gateway start timed out — killing process.");
+    child.kill("SIGTERM");
+    // If SIGTERM is ignored, force-kill after 10s.
+    setTimeout(() => {
+      if (!settled) child.kill("SIGKILL");
+    }, 10_000).unref?.();
+  }, GATEWAY_START_TIMEOUT);
+  killTimer.unref?.();
+
   return new Promise((resolve) => {
     resolvePromise = resolve;
     child.on("error", (error) => {
+      clearTimeout(killTimer);
       const detail = error?.message || String(error);
       lines.push(detail);
       finish({ status: 1, output: lines.join("\n") });
     });
     child.on("close", (code) => {
-      finish({ status: code ?? 1, output: lines.join("\n") });
+      clearTimeout(killTimer);
+      const exitCode = killedByTimeout ? 1 : (code ?? 1);
+      finish({ status: exitCode, output: lines.join("\n") });
     });
   });
 }
@@ -2331,7 +2386,24 @@ async function preflight() {
     ignoreError: true,
   });
   const activeGatewayInfo = runCaptureOpenshell(["gateway", "info"], { ignoreError: true });
-  const gatewayReuseState = getGatewayReuseState(gatewayStatus, gwInfo, activeGatewayInfo);
+  let gatewayReuseState = getGatewayReuseState(gatewayStatus, gwInfo, activeGatewayInfo);
+
+  // Verify the gateway container is actually running — openshell CLI metadata
+  // can be stale after a manual `docker rm`. See #2020.
+  if (gatewayReuseState === "healthy") {
+    const containerState = verifyGatewayContainerRunning();
+    if (containerState === "missing") {
+      console.log("  Gateway metadata is stale (container not running). Cleaning up...");
+      runOpenshell(["forward", "stop", String(DASHBOARD_PORT)], { ignoreError: true });
+      destroyGateway();
+      registry.clearAll();
+      gatewayReuseState = "missing";
+      console.log("  ✓ Stale gateway metadata cleaned up");
+    } else if (containerState === "unknown") {
+      console.log("  Warning: could not verify gateway container state (Docker may be unavailable). Proceeding with cached health status.");
+    }
+  }
+
   if (gatewayReuseState === "stale" || gatewayReuseState === "active-unnamed") {
     console.log("  Cleaning up previous NemoClaw session...");
     runOpenshell(["forward", "stop", String(DASHBOARD_PORT)], { ignoreError: true });
@@ -2512,6 +2584,7 @@ async function preflight() {
 
 // ── Step 2: Gateway ──────────────────────────────────────────────
 
+/** Start the OpenShell gateway with retry logic and post-start health polling. */
 async function startGatewayWithOptions(_gpu, { exitOnFailure = true } = {}) {
   step(2, 8, "Starting OpenShell gateway");
 
@@ -2595,8 +2668,11 @@ async function startGatewayWithOptions(_gpu, { exitOnFailure = true } = {}) {
 
         // ARM64 (e.g. Raspberry Pi) needs more time: k3s takes 90-180s to init
         const isArm64 = process.arch === "arm64";
-        const healthPollCount = envInt("NEMOCLAW_HEALTH_POLL_COUNT", isArm64 ? 30 : 5);
-        const healthPollInterval = envInt("NEMOCLAW_HEALTH_POLL_INTERVAL", isArm64 ? 10 : 2);
+        // After openshell gateway start returns (container HEALTHY at Layer 1),
+        // poll application-layer connectivity (Layer 2: gRPC, TLS, port mapping).
+        // 60s default gives enough buffer for gRPC init and TLS handshake. (#1830)
+        const healthPollCount = envInt("NEMOCLAW_HEALTH_POLL_COUNT", isArm64 ? 30 : 12);
+        const healthPollInterval = envInt("NEMOCLAW_HEALTH_POLL_INTERVAL", isArm64 ? 10 : 5);
         for (let i = 0; i < healthPollCount; i++) {
           // Ensure the gateway is selected before each probe (non-TTY environments
           // like ARM64 may not have it selected automatically)
@@ -4386,6 +4462,61 @@ const MESSAGING_CHANNELS = [
   },
 ];
 
+// Curl exit codes that indicate a network-level failure (not a token problem).
+// 35 (TLS handshake failure) covers corporate proxies that MITM HTTPS.
+const TELEGRAM_NETWORK_CURL_CODES = new Set([6, 7, 28, 35, 52, 56]);
+
+async function checkTelegramReachability(token: string) {
+  const result = runCurlProbe([
+    "-sS",
+    "--connect-timeout", "5",
+    "--max-time", "10",
+    `https://api.telegram.org/bot${token}/getMe`,
+  ]);
+
+  // HTTP 200 with "ok":true — Telegram is reachable and token is valid.
+  if (result.ok) return;
+
+  // HTTP 401 or 404 — token was rejected by Telegram (not a network issue).
+  if (result.httpStatus === 401 || result.httpStatus === 404) {
+    console.log(
+      "  ⚠ Bot token was rejected by Telegram — verify the token is correct.",
+    );
+    return;
+  }
+
+  // Network-level failure — Telegram is unreachable from this host.
+  if (result.curlStatus && TELEGRAM_NETWORK_CURL_CODES.has(result.curlStatus)) {
+    console.log("");
+    console.log("  ⚠ api.telegram.org is not reachable from this host.");
+    console.log("    Telegram integration requires outbound HTTPS access to api.telegram.org.");
+    console.log("    This is commonly blocked by corporate network proxies.");
+
+    if (isNonInteractive()) {
+      console.error("  Aborting onboarding in non-interactive mode due to Telegram network reachability failure.");
+      process.exit(1);
+    } else {
+      const answer = (await promptOrDefault("    Continue anyway? [y/N]: ", null, "n"))
+        .trim()
+        .toLowerCase();
+      if (answer !== "y" && answer !== "yes") {
+        console.log("  Aborting onboarding.");
+        process.exit(1);
+      }
+    }
+    return;
+  }
+
+  // Unexpected probe failure — warn but don't block.
+  if (!result.ok && result.httpStatus > 0) {
+    console.log(
+      `  ⚠ Telegram API returned HTTP ${result.httpStatus} — the bot may not work correctly.`,
+    );
+  } else if (!result.ok) {
+    console.log(`  ⚠ Telegram reachability probe failed: ${result.message}`);
+  }
+}
+
 async function setupMessagingChannels() {
   step(5, 8, "Messaging channels");
 
@@ -4397,6 +4528,9 @@ async function setupMessagingChannels() {
     const found = MESSAGING_CHANNELS.filter((c) => getMessagingToken(c.envKey)).map((c) => c.name);
     if (found.length > 0) {
       note(`  [non-interactive] Messaging tokens detected: ${found.join(", ")}`);
+      if (found.includes("telegram")) {
+        await checkTelegramReachability(getMessagingToken("TELEGRAM_BOT_TOKEN"));
+      }
     } else {
       note("  [non-interactive] No messaging tokens configured. Skipping.");
     }
@@ -4569,6 +4703,19 @@ async function setupMessagingChannels() {
     }
   }
   console.log("");
+
+  // Preflight: verify Telegram API is reachable from the host before sandbox creation.
+  // The non-interactive branch above already ran this probe and returned early,
+  // so this second call only fires on the interactive path — guard explicitly
+  // to make the no-double-probe invariant visible at the call site.
+  if (
+    !isNonInteractive() &&
+    selected.includes("telegram") &&
+    getMessagingToken("TELEGRAM_BOT_TOKEN")
+  ) {
+    await checkTelegramReachability(getMessagingToken("TELEGRAM_BOT_TOKEN"));
+  }
+
   return selected;
 }
 
@@ -5795,7 +5942,24 @@ async function onboard(opts = {}) {
       ignoreError: true,
     });
     const activeGatewayInfo = runCaptureOpenshell(["gateway", "info"], { ignoreError: true });
-    const gatewayReuseState = getGatewayReuseState(gatewayStatus, gatewayInfo, activeGatewayInfo);
+    let gatewayReuseState = getGatewayReuseState(gatewayStatus, gatewayInfo, activeGatewayInfo);
+
+    // Verify the gateway container is actually running — openshell CLI metadata
+    // can be stale after a manual `docker rm`. See #2020.
+    if (gatewayReuseState === "healthy") {
+      const containerState = verifyGatewayContainerRunning();
+      if (containerState === "missing") {
+        console.log("  Gateway metadata is stale (container not running). Cleaning up...");
+        runOpenshell(["forward", "stop", String(DASHBOARD_PORT)], { ignoreError: true });
+        destroyGateway();
+        registry.clearAll();
+        gatewayReuseState = "missing";
+        console.log("  ✓ Stale gateway metadata cleaned up");
+      } else if (containerState === "unknown") {
+        console.log("  Warning: could not verify gateway container state (Docker may be unavailable). Proceeding with cached health status.");
+      }
+    }
+
     const canReuseHealthyGateway = gatewayReuseState === "healthy";
     const resumeGateway =
       resume && session?.steps?.gateway?.status === "complete" && canReuseHealthyGateway;
@@ -6149,4 +6313,6 @@ module.exports = {
   ensureOllamaAuthProxy,
   getProbeAuthMode,
   getValidationProbeCurlArgs,
+  checkTelegramReachability,
+  TELEGRAM_NETWORK_CURL_CODES,
 };
