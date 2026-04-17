@@ -73,15 +73,20 @@ let configDirCreated = false;
 
 function ensureConfigDir(): void {
   if (configDirCreated) return;
-  if (!existsSync(configDir)) {
-    try {
-      safeMkdirSync(configDir);
-    } catch {
-      configDir = join(tmpdir(), ".nemoclaw");
-      if (!existsSync(configDir)) {
-        safeMkdirSync(configDir);
-      }
+  try {
+    safeMkdirSync(configDir);
+  } catch (error: unknown) {
+    // Never swallow symlink errors — they indicate an attack.
+    if (error instanceof Error && /symbolic link/i.test(error.message)) {
+      throw error;
     }
+    // Fall back to tmpdir only for permission/filesystem errors.
+    const code = (error as NodeJS.ErrnoException).code;
+    if (!code || !["EACCES", "EPERM", "EROFS"].includes(code)) {
+      throw error;
+    }
+    configDir = join(tmpdir(), ".nemoclaw");
+    safeMkdirSync(configDir);
   }
   configDirCreated = true;
 }
