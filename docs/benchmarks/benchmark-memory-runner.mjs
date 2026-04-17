@@ -36,7 +36,7 @@ const MEMORY_TYPES = ["user", "project", "feedback", "reference"];
 // Helpers
 // ---------------------------------------------------------------------------
 
-// Use cl100k_base encoding (GPT-4 / Claude-class models)
+// Use o200k_base encoding (GPT-4o tokenizer, close to Claude-class models)
 const enc = encodingForModel("gpt-4o");
 
 function countTokens(text) {
