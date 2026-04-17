@@ -20,6 +20,12 @@ on:
   push:
     branches:
       - main
+    paths-ignore:
+      - "docs/**"
+      - "**/*.md"
+      - ".github/workflows/docs-preview-*.yaml"
+      - "ISSUE_TEMPLATE/**"
+      - ".github/ISSUE_TEMPLATE/**"
 
 permissions:
   contents: read
@@ -34,10 +40,10 @@ jobs:
     timeout-minutes: 30
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
 
       - name: Setup Node.js
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f # v6
         with:
           node-version: "22"
           cache: npm
@@ -61,7 +67,7 @@ jobs:
         run: |
           set -euo pipefail
           cd nemoclaw
-          npm install --ignore-scripts
+          npm ci --ignore-scripts
           npm run build
 
       - name: Run vitest suite
@@ -95,3 +101,12 @@ jobs:
         run: |
           echo 'Skipping macOS full E2E because Docker is unavailable on this runner.'
           echo 'The workflow still validated the NemoClaw build and vitest suite on macOS (Apple Silicon).'
+
+      - name: Upload logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-e2e-logs
+          path: |
+            /tmp/nemoclaw-e2e-*.log
+          if-no-files-found: ignore
