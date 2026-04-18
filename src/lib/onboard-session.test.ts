@@ -48,7 +48,12 @@ describe("onboard session", () => {
     const stat = fs.statSync(session.SESSION_FILE);
     const dirStat = fs.statSync(path.dirname(session.SESSION_FILE));
 
+    expect(saved.version).toBe(2);
     expect(saved.mode).toBe("non-interactive");
+    expect(saved.steps.messaging.status).toBe("pending");
+    expect(saved.steps.runtime_setup.status).toBe("pending");
+    expect(saved.steps.openclaw.status).toBe("pending");
+    expect(saved.steps.agent_setup.status).toBe("pending");
     expect(fs.existsSync(session.SESSION_FILE)).toBe(true);
     expect(stat.mode & 0o777).toBe(0o600);
     expect(dirStat.mode & 0o777).toBe(0o700);
@@ -136,6 +141,20 @@ describe("onboard session", () => {
     expect(loaded.webSearchConfig).toBeNull();
   });
 
+  it("persists messaging channel selections through safe session updates", () => {
+    session.saveSession(session.createSession());
+    session.markStepComplete("provider_selection", {
+      messagingChannels: ["telegram", "slack"],
+    });
+
+    let loaded = session.loadSession();
+    expect(loaded.messagingChannels).toEqual(["telegram", "slack"]);
+
+    session.completeSession({ messagingChannels: null });
+    loaded = session.loadSession();
+    expect(loaded.messagingChannels).toBeNull();
+  });
+
   it("does not clear existing metadata when updates omit whitelisted metadata fields", () => {
     session.saveSession(session.createSession({ metadata: { gatewayName: "nemoclaw" } }));
     session.markStepComplete("provider_selection", {
@@ -147,6 +166,60 @@ describe("onboard session", () => {
     const loaded = session.loadSession();
     expect(loaded.metadata.gatewayName).toBe("nemoclaw");
     expect(loaded.metadata.token).toBeUndefined();
+  });
+
+  it("migrates legacy v1 sessions into the typed v2 schema", () => {
+    fs.mkdirSync(path.dirname(session.SESSION_FILE), { recursive: true });
+    fs.writeFileSync(
+      session.SESSION_FILE,
+      JSON.stringify({
+        version: 1,
+        sessionId: "legacy-session",
+        resumable: true,
+        status: "in_progress",
+        mode: "interactive",
+        startedAt: "2026-04-17T00:00:00.000Z",
+        updatedAt: "2026-04-17T00:00:01.000Z",
+        lastStepStarted: "openclaw",
+        lastCompletedStep: "sandbox",
+        failure: null,
+        agent: null,
+        sandboxName: "legacy-box",
+        provider: "openai-api",
+        model: "gpt-5.4",
+        endpointUrl: "https://api.openai.com/v1",
+        credentialEnv: "OPENAI_API_KEY",
+        preferredInferenceApi: "responses",
+        nimContainer: null,
+        webSearchConfig: { fetchEnabled: true },
+        policyPresets: ["npm"],
+        metadata: { gatewayName: "nemoclaw", fromDockerfile: null },
+        steps: {
+          preflight: { status: "complete", startedAt: null, completedAt: null, error: null },
+          gateway: { status: "complete", startedAt: null, completedAt: null, error: null },
+          sandbox: { status: "complete", startedAt: null, completedAt: null, error: null },
+          provider_selection: {
+            status: "complete",
+            startedAt: null,
+            completedAt: null,
+            error: null,
+          },
+          inference: { status: "complete", startedAt: null, completedAt: null, error: null },
+          openclaw: { status: "complete", startedAt: null, completedAt: null, error: null },
+          agent_setup: { status: "skipped", startedAt: null, completedAt: null, error: null },
+          policies: { status: "pending", startedAt: null, completedAt: null, error: null },
+        },
+      }),
+    );
+
+    const loaded = session.loadSession();
+    expect(loaded.version).toBe(2);
+    expect(loaded.sandboxName).toBe("legacy-box");
+    expect(loaded.steps.messaging.status).toBe("pending");
+    expect(loaded.steps.runtime_setup.status).toBe("complete");
+    expect(loaded.steps.openclaw.status).toBe("complete");
+    expect(loaded.steps.agent_setup.status).toBe("skipped");
+    expect(loaded.lastStepStarted).toBe("openclaw");
   });
 
   it("returns null for corrupt session data", () => {

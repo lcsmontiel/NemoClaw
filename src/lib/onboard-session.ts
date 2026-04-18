@@ -10,25 +10,37 @@
 import fs from "node:fs";
 import path from "node:path";
 
+import {
+  createEmptyStepLedger,
+  isOnboardStepName,
+  type OnboardMode,
+  type OnboardRunStatus,
+  type OnboardStepLedger,
+  type OnboardStepName,
+  type OnboardStepState,
+  type OnboardStepStatus,
+} from "./onboard-fsm";
 import type { WebSearchConfig } from "./web-search";
 
-export const SESSION_VERSION = 1;
+const LEGACY_SESSION_VERSION = 1;
+export const SESSION_VERSION = 2;
 export const SESSION_DIR = path.join(process.env.HOME || "/tmp", ".nemoclaw");
 export const SESSION_FILE = path.join(SESSION_DIR, "onboard-session.json");
 export const LOCK_FILE = path.join(SESSION_DIR, "onboard.lock");
-const VALID_STEP_STATES = new Set(["pending", "in_progress", "complete", "failed", "skipped"]);
+const VALID_STEP_STATES = new Set<OnboardStepStatus>([
+  "pending",
+  "in_progress",
+  "complete",
+  "failed",
+  "skipped",
+]);
 
 // ── Types ────────────────────────────────────────────────────────
 
-export interface StepState {
-  status: string;
-  startedAt: string | null;
-  completedAt: string | null;
-  error: string | null;
-}
+export type StepState = OnboardStepState;
 
 export interface SessionFailure {
-  step: string | null;
+  step: OnboardStepName | null;
   message: string | null;
   recordedAt: string;
 }
@@ -42,12 +54,12 @@ export interface Session {
   version: number;
   sessionId: string;
   resumable: boolean;
-  status: string;
-  mode: string;
+  status: OnboardRunStatus;
+  mode: OnboardMode;
   startedAt: string;
   updatedAt: string;
-  lastStepStarted: string | null;
-  lastCompletedStep: string | null;
+  lastStepStarted: OnboardStepName | null;
+  lastCompletedStep: OnboardStepName | null;
   failure: SessionFailure | null;
   agent: string | null;
   sandboxName: string | null;
@@ -58,9 +70,10 @@ export interface Session {
   preferredInferenceApi: string | null;
   nimContainer: string | null;
   webSearchConfig: WebSearchConfig | null;
+  messagingChannels: string[] | null;
   policyPresets: string[] | null;
   metadata: SessionMetadata;
-  steps: Record<string, StepState>;
+  steps: OnboardStepLedger;
 }
 
 export interface LockInfo {
@@ -87,6 +100,7 @@ export interface SessionUpdates {
   preferredInferenceApi?: string;
   nimContainer?: string;
   webSearchConfig?: WebSearchConfig | null;
+  messagingChannels?: string[] | null;
   policyPresets?: string[];
   metadata?: { gatewayName?: string; fromDockerfile?: string | null };
 }
@@ -105,17 +119,8 @@ export function lockPath(): string {
   return LOCK_FILE;
 }
 
-function defaultSteps(): Record<string, StepState> {
-  return {
-    preflight: { status: "pending", startedAt: null, completedAt: null, error: null },
-    gateway: { status: "pending", startedAt: null, completedAt: null, error: null },
-    sandbox: { status: "pending", startedAt: null, completedAt: null, error: null },
-    provider_selection: { status: "pending", startedAt: null, completedAt: null, error: null },
-    inference: { status: "pending", startedAt: null, completedAt: null, error: null },
-    openclaw: { status: "pending", startedAt: null, completedAt: null, error: null },
-    agent_setup: { status: "pending", startedAt: null, completedAt: null, error: null },
-    policies: { status: "pending", startedAt: null, completedAt: null, error: null },
-  };
+function defaultSteps(): OnboardStepLedger {
+  return createEmptyStepLedger();
 }
 
 export function isObject(value: unknown): value is Record<string, unknown> {
@@ -140,17 +145,90 @@ export function sanitizeFailure(
   input: { step?: unknown; message?: unknown; recordedAt?: unknown } | null | undefined,
 ): SessionFailure | null {
   if (!input) return null;
-  const step = typeof input.step === "string" ? input.step : null;
+  const step = isOnboardStepName(input.step) ? input.step : null;
   const message = redactSensitiveText(input.message);
   const recordedAt =
     typeof input.recordedAt === "string" ? input.recordedAt : new Date().toISOString();
   return step || message ? { step, message, recordedAt } : null;
 }
 
-export function validateStep(step: unknown): boolean {
+export function validateStep(step: unknown): step is OnboardStepState {
   if (!isObject(step)) return false;
-  if (!VALID_STEP_STATES.has(step.status as string)) return false;
+  if (!VALID_STEP_STATES.has(step.status as OnboardStepStatus)) return false;
   return true;
+}
+
+function isOnboardMode(value: unknown): value is OnboardMode {
+  return value === "interactive" || value === "non-interactive";
+}
+
+function isOnboardRunStatus(value: unknown): value is OnboardRunStatus {
+  return value === "in_progress" || value === "complete" || value === "failed";
+}
+
+function normalizeStepName(value: unknown): OnboardStepName | null {
+  return isOnboardStepName(value) ? value : null;
+}
+
+function cloneStepState(step: OnboardStepState): OnboardStepState {
+  return {
+    status: step.status,
+    startedAt: step.startedAt,
+    completedAt: step.completedAt,
+    error: step.error,
+  };
+}
+
+function pickAggregateStepState(states: readonly OnboardStepState[]): OnboardStepState {
+  const failed = states.find((state) => state.status === "failed");
+  if (failed) return cloneStepState(failed);
+
+  const inProgress = states.find((state) => state.status === "in_progress");
+  if (inProgress) return cloneStepState(inProgress);
+
+  const complete = states.find((state) => state.status === "complete");
+  if (complete) return cloneStepState(complete);
+
+  if (states.every((state) => state.status === "skipped")) {
+    return cloneStepState(states[0]);
+  }
+
+  const skipped = states.find((state) => state.status === "skipped");
+  if (skipped) return cloneStepState(skipped);
+
+  return cloneStepState(states[0]);
+}
+
+function synchronizeRuntimeSteps(session: Session): void {
+  const runtimeStates = [
+    session.steps.runtime_setup,
+    session.steps.openclaw,
+    session.steps.agent_setup,
+  ] as const;
+  session.steps.runtime_setup = pickAggregateStepState(runtimeStates);
+
+  if (session.steps.runtime_setup.status === "pending") {
+    return;
+  }
+
+  const selectedLegacyStep = session.agent ? "agent_setup" : "openclaw";
+  const siblingLegacyStep = session.agent ? "openclaw" : "agent_setup";
+
+  if (session.steps[selectedLegacyStep].status === "pending") {
+    session.steps[selectedLegacyStep] = cloneStepState(session.steps.runtime_setup);
+  }
+
+  if (
+    session.steps.runtime_setup.status === "complete" &&
+    session.steps[siblingLegacyStep].status === "pending"
+  ) {
+    session.steps[siblingLegacyStep] = {
+      status: "skipped",
+      startedAt: null,
+      completedAt: null,
+      error: null,
+    };
+  }
 }
 
 export function redactUrl(value: unknown): string | null {
@@ -177,12 +255,12 @@ export function redactUrl(value: unknown): string | null {
 
 export function createSession(overrides: Partial<Session> = {}): Session {
   const now = new Date().toISOString();
-  return {
+  const session: Session = {
     version: SESSION_VERSION,
     sessionId: overrides.sessionId || `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`,
     resumable: true,
-    status: "in_progress",
-    mode: overrides.mode || "interactive",
+    status: overrides.status && isOnboardRunStatus(overrides.status) ? overrides.status : "in_progress",
+    mode: overrides.mode && isOnboardMode(overrides.mode) ? overrides.mode : "interactive",
     startedAt: overrides.startedAt || now,
     updatedAt: overrides.updatedAt || now,
     lastStepStarted: overrides.lastStepStarted || null,
@@ -200,6 +278,9 @@ export function createSession(overrides: Partial<Session> = {}): Session {
       overrides.webSearchConfig && overrides.webSearchConfig.fetchEnabled === true
         ? { fetchEnabled: true }
         : null,
+    messagingChannels: Array.isArray(overrides.messagingChannels)
+      ? overrides.messagingChannels.filter((value) => typeof value === "string")
+      : null,
     policyPresets: Array.isArray(overrides.policyPresets)
       ? overrides.policyPresets.filter((value) => typeof value === "string")
       : null,
@@ -212,15 +293,22 @@ export function createSession(overrides: Partial<Session> = {}): Session {
       ...(overrides.steps || {}),
     },
   };
+  synchronizeRuntimeSteps(session);
+  return session;
 }
 
 // eslint-disable-next-line complexity
 export function normalizeSession(data: unknown): Session | null {
-  if (!isObject(data) || (data as Record<string, unknown>).version !== SESSION_VERSION) return null;
+  if (!isObject(data)) return null;
   const d = data as Record<string, unknown>;
+  if (d.version !== SESSION_VERSION && d.version !== LEGACY_SESSION_VERSION) {
+    return null;
+  }
+
   const normalized = createSession({
     sessionId: typeof d.sessionId === "string" ? d.sessionId : undefined,
-    mode: typeof d.mode === "string" ? d.mode : undefined,
+    mode: isOnboardMode(d.mode) ? d.mode : undefined,
+    status: isOnboardRunStatus(d.status) ? d.status : undefined,
     startedAt: typeof d.startedAt === "string" ? d.startedAt : undefined,
     updatedAt: typeof d.updatedAt === "string" ? d.updatedAt : undefined,
     agent: typeof d.agent === "string" ? d.agent : null,
@@ -237,11 +325,14 @@ export function normalizeSession(data: unknown): Session | null {
       (d.webSearchConfig as Record<string, unknown>).fetchEnabled === true
         ? { fetchEnabled: true }
         : null,
+    messagingChannels: Array.isArray(d.messagingChannels)
+      ? (d.messagingChannels as unknown[]).filter((value) => typeof value === "string") as string[]
+      : null,
     policyPresets: Array.isArray(d.policyPresets)
       ? (d.policyPresets as unknown[]).filter((value) => typeof value === "string") as string[]
       : null,
-    lastStepStarted: typeof d.lastStepStarted === "string" ? d.lastStepStarted : null,
-    lastCompletedStep: typeof d.lastCompletedStep === "string" ? d.lastCompletedStep : null,
+    lastStepStarted: normalizeStepName(d.lastStepStarted),
+    lastCompletedStep: normalizeStepName(d.lastCompletedStep),
     failure: sanitizeFailure(d.failure as Record<string, unknown> | null),
     metadata: isObject(d.metadata)
       ? ({
@@ -251,25 +342,24 @@ export function normalizeSession(data: unknown): Session | null {
       : undefined,
   } as Partial<Session>);
   normalized.resumable = d.resumable !== false;
-  normalized.status = typeof d.status === "string" ? d.status : normalized.status;
+  normalized.version = SESSION_VERSION;
 
   if (isObject(d.steps)) {
-    for (const [name, step] of Object.entries(d.steps as Record<string, unknown>)) {
-      if (
-        Object.prototype.hasOwnProperty.call(normalized.steps, name) &&
-        validateStep(step)
-      ) {
-        const s = step as Record<string, unknown>;
-        normalized.steps[name] = {
-          status: s.status as string,
-          startedAt: typeof s.startedAt === "string" ? s.startedAt : null,
-          completedAt: typeof s.completedAt === "string" ? s.completedAt : null,
-          error: redactSensitiveText(s.error),
-        };
+    for (const [rawName, step] of Object.entries(d.steps as Record<string, unknown>)) {
+      const name = normalizeStepName(rawName);
+      if (!name || !validateStep(step)) {
+        continue;
       }
+      normalized.steps[name] = {
+        status: step.status,
+        startedAt: typeof step.startedAt === "string" ? step.startedAt : null,
+        completedAt: typeof step.completedAt === "string" ? step.completedAt : null,
+        error: redactSensitiveText(step.error),
+      };
     }
   }
 
+  synchronizeRuntimeSteps(normalized);
   return normalized;
 }
 
@@ -547,6 +637,11 @@ export function filterSafeUpdates(updates: SessionUpdates): Partial<Session> {
   } else if (updates.webSearchConfig === null) {
     safe.webSearchConfig = null;
   }
+  if (Array.isArray(updates.messagingChannels)) {
+    safe.messagingChannels = updates.messagingChannels.filter((value) => typeof value === "string");
+  } else if (updates.messagingChannels === null) {
+    safe.messagingChannels = null;
+  }
   if (Array.isArray(updates.policyPresets)) {
     safe.policyPresets = updates.policyPresets.filter((value) => typeof value === "string");
   }
@@ -565,7 +660,7 @@ export function updateSession(mutator: (session: Session) => Session | void): Se
   return saveSession(next);
 }
 
-export function markStepStarted(stepName: string): Session {
+export function markStepStarted(stepName: OnboardStepName): Session {
   return updateSession((session) => {
     const step = session.steps[stepName];
     if (!step) return session;
@@ -580,7 +675,7 @@ export function markStepStarted(stepName: string): Session {
   });
 }
 
-export function markStepComplete(stepName: string, updates: SessionUpdates = {}): Session {
+export function markStepComplete(stepName: OnboardStepName, updates: SessionUpdates = {}): Session {
   return updateSession((session) => {
     const step = session.steps[stepName];
     if (!step) return session;
@@ -594,7 +689,7 @@ export function markStepComplete(stepName: string, updates: SessionUpdates = {})
   });
 }
 
-export function markStepSkipped(stepName: string): Session {
+export function markStepSkipped(stepName: OnboardStepName): Session {
   return updateSession((session) => {
     const step = session.steps[stepName];
     if (!step) return session;
@@ -607,7 +702,7 @@ export function markStepSkipped(stepName: string): Session {
   });
 }
 
-export function markStepFailed(stepName: string, message: string | null = null): Session {
+export function markStepFailed(stepName: OnboardStepName, message: string | null = null): Session {
   return updateSession((session) => {
     const step = session.steps[stepName];
     if (!step) return session;
@@ -654,6 +749,7 @@ export function summarizeForDebug(session: Session | null = loadSession()): Reco
     credentialEnv: session.credentialEnv,
     preferredInferenceApi: session.preferredInferenceApi,
     nimContainer: session.nimContainer,
+    messagingChannels: session.messagingChannels,
     policyPresets: session.policyPresets,
     lastStepStarted: session.lastStepStarted,
     lastCompletedStep: session.lastCompletedStep,
