@@ -2105,15 +2105,22 @@ const { setupInference } = require(${onboardPath});
   });
 
   it("marks the unused agent_setup/openclaw sibling step as skipped (#1834)", () => {
-    const source = fs.readFileSync(
+    const onboardSource = fs.readFileSync(
       path.join(import.meta.dirname, "..", "src", "lib", "onboard.ts"),
       "utf-8",
     );
+    const helperSource = fs.readFileSync(
+      path.join(import.meta.dirname, "..", "src", "lib", "onboard-runtime-flow.ts"),
+      "utf-8",
+    );
 
+    assert.match(onboardSource, /runRuntimeSetupFlow\(/);
     // When agent path is taken, openclaw must be marked skipped.
-    assert.match(source, /handleAgentSetup[\s\S]*?recordStepSkipped\("openclaw"\)/);
+    assert.match(helperSource, /handleAgentSetup\(/);
+    assert.match(helperSource, /onSkipSiblingStep\("openclaw"\)/);
     // When default openclaw path is taken, agent_setup must be marked skipped.
-    assert.match(source, /setupOpenclaw[\s\S]*?recordStepSkipped\("agent_setup"\)/);
+    assert.match(helperSource, /setupOpenclaw\(/);
+    assert.match(helperSource, /onSkipSiblingStep\("agent_setup"\)/);
   });
 
   it("delegates messaging+sandbox provisioning to the extracted sandbox flow helper", () => {
@@ -2135,41 +2142,54 @@ const { setupInference } = require(${onboardPath});
   });
 
   it("prints numbered step headers even when onboarding skips resumed steps", () => {
-    const source = fs.readFileSync(
+    const onboardSource = fs.readFileSync(
       path.join(import.meta.dirname, "..", "src", "lib", "onboard.ts"),
       "utf-8",
     );
+    const runtimeHelperSource = fs.readFileSync(
+      path.join(import.meta.dirname, "..", "src", "lib", "onboard-runtime-flow.ts"),
+      "utf-8",
+    );
+    const policyHelperSource = fs.readFileSync(
+      path.join(import.meta.dirname, "..", "src", "lib", "onboard-policy-flow.ts"),
+      "utf-8",
+    );
 
-    assert.match(source, /const TOTAL_ONBOARD_STEPS = 8;/);
-    assert.match(source, /function skippedStepMessage\(stepName, detail, reason = "resume"\)/);
+    assert.match(onboardSource, /const TOTAL_ONBOARD_STEPS = 8;/);
+    assert.match(onboardSource, /function skippedStepMessage\(stepName, detail, reason = "resume"\)/);
     assert.match(
-      source,
+      onboardSource,
       /const visibleStepName = isOnboardStepName\(stepName\) \? toVisibleStepName\(stepName\) : null;/,
     );
-    assert.match(source, /step\(stepInfo\.number, TOTAL_ONBOARD_STEPS, stepInfo\.title\);/);
-    assert.match(source, /skippedStepMessage\("openclaw", sandboxName\)/);
+    assert.match(onboardSource, /step\(stepInfo\.number, TOTAL_ONBOARD_STEPS, stepInfo\.title\);/);
+    assert.match(runtimeHelperSource, /deps\.onSkip\("openclaw", state\.sandboxName\)/);
     assert.match(
-      source,
-      /skippedStepMessage\("policies", \(recordedPolicyPresets \|\| \[\]\)\.join\(", "\)\)/,
+      policyHelperSource,
+      /deps\.onSkip\("policies", \(state\.recordedPolicyPresets \|\| \[\]\)\.join\(", "\)\)/,
     );
   });
 
   it("activates permissive policy via policy set when dangerouslySkipPermissions is true", () => {
-    const source = fs.readFileSync(
+    const onboardSource = fs.readFileSync(
       path.join(import.meta.dirname, "..", "src", "lib", "onboard.ts"),
+      "utf-8",
+    );
+    const helperSource = fs.readFileSync(
+      path.join(import.meta.dirname, "..", "src", "lib", "onboard-policy-flow.ts"),
       "utf-8",
     );
 
     // The dangerouslySkipPermissions branch must call applyPermissivePolicy to
     // activate the policy via `openshell policy set --wait`.  Without this,
     // the base policy from sandbox create stays in Pending status (#897).
+    assert.match(onboardSource, /runPolicySetupFlow\(/);
     assert.match(
-      source,
-      /if \(dangerouslySkipPermissions\) \{\s*step\(8, 8, "Policy presets"\);\s*if \(!waitForSandboxReady\(sandboxName\)\) \{[\s\S]*?\}\s*policies\.applyPermissivePolicy\(sandboxName\);/,
+      helperSource,
+      /if \(deps\.dangerouslySkipPermissions\) \{\s*deps\.onShowHeader\(\);\s*if \(!deps\.waitForSandboxReady\(state\.sandboxName\)\) \{[\s\S]*?\}\s*deps\.applyPermissivePolicy\(state\.sandboxName\);/,
     );
     // Must NOT just print a skip message without activating the policy.
     assert.doesNotMatch(
-      source,
+      helperSource,
       /dangerouslySkipPermissions\)[\s\S]*?Skipped —.*permissive base policy/,
     );
   });

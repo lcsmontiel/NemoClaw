@@ -66,8 +66,10 @@ const { ONBOARD_STEP_META, isOnboardStepName, toVisibleStepName } = require("./o
 const { initializeOnboardRun } = require("./onboard-bootstrap");
 const { hasCompletedOnboardStep } = require("./onboard-flow-state");
 const { runInferenceSelectionLoop } = require("./onboard-inference-loop");
+const { runPolicySetupFlow } = require("./onboard-policy-flow");
 const { createTrackedOnboardRun } = require("./onboard-recorders");
 const { collectResumeConfigConflicts, detectResumeSandboxConflict } = require("./onboard-resume");
+const { runRuntimeSetupFlow } = require("./onboard-runtime-flow");
 const { runSandboxProvisioningFlow } = require("./onboard-sandbox-flow");
 const policies = require("./policies");
 const tiers = require("./tiers");
@@ -6026,98 +6028,96 @@ async function onboard(opts = {}) {
       },
     ));
 
-    if (agent) {
-      await agentOnboard.handleAgentSetup(sandboxName, model, provider, agent, resume, session, {
-        step,
-        runCaptureOpenshell,
-        openshellShellCommand,
-        buildSandboxConfigSyncScript,
-        writeSandboxConfigSyncFile,
-        cleanupTempDir,
-        startRecordedStep: recordStepStarted,
-        skippedStepMessage,
-      });
-      recordStepSkipped("openclaw");
-    } else {
-      const recordedRuntimeSetupComplete =
-        resume && resumeFlowState && hasCompletedOnboardStep(resumeFlowState, "runtime_setup");
-      const resumeOpenclaw =
-        recordedRuntimeSetupComplete && sandboxName && isOpenclawReady(sandboxName);
-      if (resumeOpenclaw) {
-        skippedStepMessage("openclaw", sandboxName);
-        recordStepComplete("openclaw", { sandboxName, provider, model });
-      } else {
-        recordStepStarted("openclaw", { sandboxName, provider, model });
-        await setupOpenclaw(sandboxName, model, provider);
-        recordStepComplete("openclaw", { sandboxName, provider, model });
-      }
-      recordStepSkipped("agent_setup");
-    }
+    await runRuntimeSetupFlow(
+      {
+        sandboxName,
+        model,
+        provider,
+        agent,
+        resume,
+        session,
+      },
+      {
+        hasCompletedRuntimeSetup:
+          !!resumeFlowState && hasCompletedOnboardStep(resumeFlowState, "runtime_setup"),
+        handleAgentSetup: async (nextSandboxName, nextModel, nextProvider, nextAgent) => {
+          await agentOnboard.handleAgentSetup(
+            nextSandboxName,
+            nextModel,
+            nextProvider,
+            nextAgent,
+            resume,
+            session,
+            {
+              step,
+              runCaptureOpenshell,
+              openshellShellCommand,
+              buildSandboxConfigSyncScript,
+              writeSandboxConfigSyncFile,
+              cleanupTempDir,
+              startRecordedStep: recordStepStarted,
+              skippedStepMessage,
+            },
+          );
+        },
+        isOpenclawReady,
+        setupOpenclaw,
+        onSkip: skippedStepMessage,
+        onStartStep: recordStepStarted,
+        onCompleteStep: recordStepComplete,
+        onSkipSiblingStep: recordStepSkipped,
+      },
+    );
 
     const latestSession = persistentDriver.session;
     const recordedPolicyPresets = Array.isArray(latestSession?.policyPresets)
       ? latestSession.policyPresets
       : null;
-    if (dangerouslySkipPermissions) {
-      step(8, 8, "Policy presets");
-      if (!waitForSandboxReady(sandboxName)) {
-        console.error(`\n  ✗ Sandbox '${sandboxName}' not ready after creation. Giving up.`);
-        process.exit(1);
-      }
-      policies.applyPermissivePolicy(sandboxName);
-      recordStepComplete("policies", {
+    const policyResult = await runPolicySetupFlow(
+      {
         sandboxName,
         provider,
         model,
-        policyPresets: [],
-      });
-    } else {
-      const recordedPoliciesComplete =
-        resume && resumeFlowState && hasCompletedOnboardStep(resumeFlowState, "policies");
-      const resumePolicies =
-        recordedPoliciesComplete &&
-        sandboxName &&
-        arePolicyPresetsApplied(sandboxName, recordedPolicyPresets || []);
-      if (resumePolicies) {
-        skippedStepMessage("policies", (recordedPolicyPresets || []).join(", "));
-        recordStepComplete("policies", {
-          sandboxName,
-          provider,
-          model,
-          policyPresets: recordedPolicyPresets || [],
-        });
-      } else {
-        recordStepStarted("policies", {
-          sandboxName,
-          provider,
-          model,
-          policyPresets: recordedPolicyPresets || [],
-        });
-        const appliedPolicyPresets = await setupPoliciesWithSelection(sandboxName, {
-          selectedPresets:
-            Array.isArray(recordedPolicyPresets) && recordedPolicyPresets.length > 0
-              ? recordedPolicyPresets
-              : null,
-          enabledChannels: selectedMessagingChannels,
-          webSearchConfig,
-          provider,
-          onSelection: (policyPresets) => {
-            updateRecordedSession((current) => {
-              current.policyPresets = policyPresets;
-              return current;
-            });
-          },
-        });
-        recordStepComplete("policies", {
-          sandboxName,
-          provider,
-          model,
-          policyPresets: appliedPolicyPresets,
-        });
-      }
+        webSearchConfig,
+        enabledChannels: selectedMessagingChannels,
+        recordedPolicyPresets,
+      },
+      {
+        resume,
+        dangerouslySkipPermissions,
+        hasCompletedPolicies:
+          !!resumeFlowState && hasCompletedOnboardStep(resumeFlowState, "policies"),
+        waitForSandboxReady,
+        applyPermissivePolicy: (name) => {
+          policies.applyPermissivePolicy(name);
+        },
+        arePolicyPresetsApplied,
+        setupPoliciesWithSelection,
+        onShowHeader: () => {
+          step(8, 8, "Policy presets");
+        },
+        onSkip: skippedStepMessage,
+        onStartStep: recordStepStarted,
+        onCompleteStep: recordStepComplete,
+        onSelectionPersist: (policyPresets) => {
+          updateRecordedSession((current) => {
+            current.policyPresets = policyPresets;
+            return current;
+          });
+        },
+      },
+    );
+    if (policyResult.kind === "sandbox_not_ready") {
+      console.error(`\n${policyResult.message}`);
+      process.exit(1);
     }
 
-    recordSessionComplete({ sandboxName, provider, model });
+    recordSessionComplete({
+      sandboxName,
+      provider,
+      model,
+      policyPresets: policyResult.policyPresets,
+    });
     completed = true;
     printDashboard(sandboxName, model, provider, nimContainer, agent);
   } finally {
