@@ -64,9 +64,11 @@ const nim = require("./nim");
 const onboardSession = require("./onboard-session");
 const { ONBOARD_STEP_META, isOnboardStepName, toVisibleStepName } = require("./onboard-fsm");
 const { initializeOnboardRun } = require("./onboard-bootstrap");
-const { deriveOnboardFlowState, hasCompletedOnboardStep } = require("./onboard-flow-state");
+const { hasCompletedOnboardStep } = require("./onboard-flow-state");
+const { runInferenceSelectionLoop } = require("./onboard-inference-loop");
 const { createTrackedOnboardRun } = require("./onboard-recorders");
 const { collectResumeConfigConflicts, detectResumeSandboxConflict } = require("./onboard-resume");
+const { runSandboxProvisioningFlow } = require("./onboard-sandbox-flow");
 const policies = require("./policies");
 const tiers = require("./tiers");
 const { ensureUsageNoticeConsent } = require("./usage-notice");
@@ -5931,168 +5933,98 @@ async function onboard(opts = {}) {
     selectedMessagingChannels = Array.isArray(session?.messagingChannels)
       ? [...session.messagingChannels]
       : [];
-    let forceProviderSelection = false;
-    while (true) {
-      const resumeProviderSelection =
-        !forceProviderSelection &&
-        resume &&
-        resumeFlowState &&
-        hasCompletedOnboardStep(resumeFlowState, "provider_selection") &&
-        typeof provider === "string" &&
-        typeof model === "string";
-      if (resumeProviderSelection) {
-        skippedStepMessage("provider_selection", `${provider} / ${model}`);
-        hydrateCredentialEnv(credentialEnv);
-      } else {
-        recordStepStarted("provider_selection", { sandboxName });
-        const selection = await setupNim(gpu);
-        model = selection.model;
-        provider = selection.provider;
-        endpointUrl = selection.endpointUrl;
-        credentialEnv = selection.credentialEnv;
-        preferredInferenceApi = selection.preferredInferenceApi;
-        nimContainer = selection.nimContainer;
-        recordStepComplete("provider_selection", {
-          sandboxName,
-          provider,
-          model,
-          endpointUrl,
-          credentialEnv,
-          preferredInferenceApi,
-          nimContainer,
-        });
-      }
-
-      process.env.NEMOCLAW_OPENSHELL_BIN = getOpenshellBinary();
-      const resumeInference =
-        !forceProviderSelection &&
-        resume &&
-        resumeFlowState &&
-        hasCompletedOnboardStep(resumeFlowState, "inference") &&
-        typeof provider === "string" &&
-        typeof model === "string" &&
-        isInferenceRouteReady(provider, model);
-      if (resumeInference) {
-        skippedStepMessage("inference", `${provider} / ${model}`);
-        if (nimContainer) {
-          registry.updateSandbox(sandboxName, { nimContainer });
-        }
-        recordStepComplete("inference", {
-          sandboxName,
-          provider,
-          model,
-          nimContainer,
-        });
-        break;
-      }
-
-      recordStepStarted("inference", { sandboxName, provider, model });
-      const inferenceResult = await setupInference(
+    ({
+      sandboxName,
+      model,
+      provider,
+      endpointUrl,
+      credentialEnv,
+      preferredInferenceApi,
+      nimContainer,
+    } = await runInferenceSelectionLoop(
+      {
         sandboxName,
         model,
         provider,
         endpointUrl,
         credentialEnv,
-      );
-      delete process.env.NVIDIA_API_KEY;
-      if (inferenceResult?.retry === "selection") {
-        forceProviderSelection = true;
-        continue;
-      }
-      if (nimContainer) {
-        registry.updateSandbox(sandboxName, { nimContainer });
-      }
-      recordStepComplete("inference", { sandboxName, provider, model, nimContainer });
-      break;
-    }
-
-    const sandboxReuseState = getSandboxReuseState(sandboxName);
-    const webSearchConfigChanged = Boolean(session?.webSearchConfig) !== Boolean(webSearchConfig);
-    const recordedSandboxComplete =
-      resume && resumeFlowState && hasCompletedOnboardStep(resumeFlowState, "sandbox");
-    const resumeSandbox =
-      recordedSandboxComplete &&
-      !webSearchConfigChanged &&
-      sandboxReuseState === "ready";
-    if (resumeSandbox) {
-      if (webSearchConfig) {
-        note("  [resume] Reusing Brave Search configuration already baked into the sandbox.");
-      }
-      skippedStepMessage("sandbox", sandboxName);
-    } else {
-      if (recordedSandboxComplete) {
-        if (webSearchConfigChanged) {
-          note("  [resume] Web Search configuration changed; recreating sandbox.");
-          if (sandboxName) {
-            registry.removeSandbox(sandboxName);
-          }
-        } else if (sandboxReuseState === "not_ready") {
-          note(
-            `  [resume] Recorded sandbox '${sandboxName}' exists but is not ready; recreating it.`,
-          );
-          repairRecordedSandbox(sandboxName);
-        } else {
-          note("  [resume] Recorded sandbox state is unavailable; recreating it.");
-          if (sandboxName) {
-            registry.removeSandbox(sandboxName);
-          }
-        }
-      }
-      let nextWebSearchConfig = webSearchConfig;
-      if (nextWebSearchConfig) {
-        note("  [resume] Revalidating Brave Search configuration for sandbox recreation.");
-        const braveApiKey = await ensureValidatedBraveSearchCredential();
-        nextWebSearchConfig = braveApiKey ? { fetchEnabled: true } : null;
-        if (nextWebSearchConfig) {
-          note("  [resume] Reusing Brave Search configuration.");
-        }
-      } else {
-        nextWebSearchConfig = await configureWebSearch(null);
-      }
-      const resumeMessaging =
-        resume &&
-        Array.isArray(session?.messagingChannels) &&
-        resumeFlowState &&
-        hasCompletedOnboardStep(resumeFlowState, "messaging");
-      if (resumeMessaging) {
-        selectedMessagingChannels = [...session.messagingChannels];
-        skippedStepMessage("messaging", selectedMessagingChannels.join(", "));
-      } else {
-        recordStepStarted("messaging", { sandboxName, provider, model });
-        selectedMessagingChannels = await setupMessagingChannels();
-        recordStepComplete("messaging", {
-          sandboxName,
-          provider,
-          model,
-          messagingChannels: selectedMessagingChannels,
-        });
-      }
-      recordStepStarted("sandbox", { sandboxName, provider, model });
-      sandboxName = await createSandbox(
+        preferredInferenceApi,
+        nimContainer,
+      },
+      {
         gpu,
+        resume,
+        hasCompletedProviderSelection:
+          !!resumeFlowState && hasCompletedOnboardStep(resumeFlowState, "provider_selection"),
+        hasCompletedInference:
+          !!resumeFlowState && hasCompletedOnboardStep(resumeFlowState, "inference"),
+        setupNim,
+        setupInference,
+        isInferenceRouteReady,
+        hydrateCredentialEnv,
+        getOpenshellBinary,
+        setOpenshellBinary: (binary) => {
+          process.env.NEMOCLAW_OPENSHELL_BIN = binary;
+        },
+        clearSensitiveEnv: () => {
+          delete process.env.NVIDIA_API_KEY;
+        },
+        updateSandboxNimContainer: (nextSandboxName, nextNimContainer) => {
+          registry.updateSandbox(nextSandboxName, { nimContainer: nextNimContainer });
+        },
+        onSkip: skippedStepMessage,
+        onStartStep: recordStepStarted,
+        onCompleteStep: recordStepComplete,
+      },
+    ));
+
+    ({
+      sandboxName,
+      webSearchConfig,
+      selectedMessagingChannels,
+    } = await runSandboxProvisioningFlow(
+      {
+        gpu,
+        sandboxName,
         model,
         provider,
         preferredInferenceApi,
-        sandboxName,
-        nextWebSearchConfig,
+        webSearchConfig,
         selectedMessagingChannels,
+        nimContainer,
         fromDockerfile,
         agent,
         dangerouslySkipPermissions,
-      );
-      webSearchConfig = nextWebSearchConfig;
-      // Persist model and provider after the sandbox entry exists in the registry.
-      // updateSandbox() silently no-ops when the entry is missing, so this must
-      // run after createSandbox() / registerSandbox() — not before. Fixes #1881.
-      registry.updateSandbox(sandboxName, { model, provider });
-      recordStepComplete("sandbox", {
-        sandboxName,
-        provider,
-        model,
-        nimContainer,
-        webSearchConfig,
-      });
-    }
+      },
+      {
+        resume,
+        sessionMessagingChannels: Array.isArray(session?.messagingChannels)
+          ? [...session.messagingChannels]
+          : null,
+        sessionWebSearchConfig: session?.webSearchConfig || null,
+        hasCompletedMessaging: !!resumeFlowState && hasCompletedOnboardStep(resumeFlowState, "messaging"),
+        hasCompletedSandbox: !!resumeFlowState && hasCompletedOnboardStep(resumeFlowState, "sandbox"),
+        setupMessagingChannels,
+        configureWebSearch,
+        ensureValidatedBraveSearchCredential,
+        getSandboxReuseState,
+        removeSandbox: (name) => {
+          registry.removeSandbox(name);
+        },
+        repairRecordedSandbox,
+        createSandbox,
+        persistRegistryModelProvider: (name, patch) => {
+          // Persist model and provider after the sandbox entry exists in the registry.
+          // updateSandbox() silently no-ops when the entry is missing, so this must
+          // run after createSandbox() / registerSandbox() — not before. Fixes #1881.
+          registry.updateSandbox(name, patch);
+        },
+        onNote: note,
+        onSkip: skippedStepMessage,
+        onStartStep: recordStepStarted,
+        onCompleteStep: recordStepComplete,
+      },
+    ));
 
     if (agent) {
       await agentOnboard.handleAgentSetup(sandboxName, model, provider, agent, resume, session, {

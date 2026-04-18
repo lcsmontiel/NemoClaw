@@ -2116,20 +2116,22 @@ const { setupInference } = require(${onboardPath});
     assert.match(source, /setupOpenclaw[\s\S]*?recordStepSkipped\("agent_setup"\)/);
   });
 
-  it("records messaging before sandbox creation and persists selected channels", () => {
-    const source = fs.readFileSync(
+  it("delegates messaging+sandbox provisioning to the extracted sandbox flow helper", () => {
+    const onboardSource = fs.readFileSync(
       path.join(import.meta.dirname, "..", "src", "lib", "onboard.ts"),
       "utf-8",
     );
+    const helperSource = fs.readFileSync(
+      path.join(import.meta.dirname, "..", "src", "lib", "onboard-sandbox-flow.ts"),
+      "utf-8",
+    );
 
-    assert.match(
-      source,
-      /recordStepStarted\("messaging", \{ sandboxName, provider, model \}\);\s*selectedMessagingChannels = await setupMessagingChannels\(\);\s*recordStepComplete\("messaging", \{\s*sandboxName,\s*provider,\s*model,\s*messagingChannels: selectedMessagingChannels,\s*\}\);\s*}\s*recordStepStarted\("sandbox", \{ sandboxName, provider, model \}\);\s*sandboxName = await createSandbox\(/,
-    );
-    assert.match(
-      source,
-      /const resumeMessaging =\s*resume &&\s*Array\.isArray\(session\?\.messagingChannels\)/,
-    );
+    assert.match(onboardSource, /runSandboxProvisioningFlow\(/);
+    assert.match(helperSource, /onStartStep\("messaging"/);
+    assert.match(helperSource, /onCompleteStep\("messaging"/);
+    assert.match(helperSource, /onStartStep\("sandbox"/);
+    assert.match(helperSource, /persistRegistryModelProvider\(/);
+    assert.match(helperSource, /resume && Array\.isArray\(deps\.sessionMessagingChannels\)/);
   });
 
   it("prints numbered step headers even when onboarding skips resumed steps", () => {
@@ -5215,21 +5217,29 @@ const { createSandbox } = require(${onboardPath});
 
   it("regression #1881: registry.updateSandbox(model/provider) is called AFTER createSandbox", () => {
     // updateSandbox() silently no-ops when the entry does not exist yet.
-    // This asserts that the model/provider update comes AFTER createSandbox()
-    // returns, not before registerSandbox() is called (the original bug).
-    const source = fs.readFileSync(
+    // This asserts that the extracted sandbox helper still performs the
+    // model/provider registry update AFTER createSandbox() returns.
+    const helperSource = fs.readFileSync(
+      path.join(import.meta.dirname, "..", "src", "lib", "onboard-sandbox-flow.ts"),
+      "utf-8",
+    );
+    const onboardSource = fs.readFileSync(
       path.join(import.meta.dirname, "..", "src", "lib", "onboard.ts"),
       "utf-8",
     );
-    const createSandboxPos = source.indexOf("sandboxName = await createSandbox(");
-    assert.ok(createSandboxPos !== -1, "createSandbox call not found in onboard.ts");
-    const updateAfterCreate = source.indexOf(
-      "registry.updateSandbox(sandboxName, { model, provider })",
+    const createSandboxPos = helperSource.indexOf("const nextSandboxName = await deps.createSandbox(");
+    assert.ok(createSandboxPos !== -1, "createSandbox call not found in onboard-sandbox-flow.ts");
+    const updateAfterCreate = helperSource.indexOf(
+      "deps.persistRegistryModelProvider(nextSandboxName, {",
       createSandboxPos,
     );
     assert.ok(
       updateAfterCreate !== -1,
-      "registry.updateSandbox(model, provider) must appear AFTER createSandbox() — regression #1881",
+      "persistRegistryModelProvider must appear AFTER createSandbox() — regression #1881",
+    );
+    assert.match(
+      onboardSource,
+      /persistRegistryModelProvider: \(name, patch\) => \{[\s\S]*?registry\.updateSandbox\(name, patch\);[\s\S]*?\}/,
     );
   });
 
