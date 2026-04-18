@@ -2146,6 +2146,10 @@ const { setupInference } = require(${onboardPath});
       path.join(import.meta.dirname, "..", "src", "lib", "onboard.ts"),
       "utf-8",
     );
+    const hostHelperSource = fs.readFileSync(
+      path.join(import.meta.dirname, "..", "src", "lib", "onboard-host-flow.ts"),
+      "utf-8",
+    );
     const runtimeHelperSource = fs.readFileSync(
       path.join(import.meta.dirname, "..", "src", "lib", "onboard-runtime-flow.ts"),
       "utf-8",
@@ -2162,6 +2166,8 @@ const { setupInference } = require(${onboardPath});
       /const visibleStepName = isOnboardStepName\(stepName\) \? toVisibleStepName\(stepName\) : null;/,
     );
     assert.match(onboardSource, /step\(stepInfo\.number, TOTAL_ONBOARD_STEPS, stepInfo\.title\);/);
+    assert.match(hostHelperSource, /deps\.onSkip\("preflight", "cached"\)/);
+    assert.match(hostHelperSource, /deps\.onSkip\("gateway", "running"/);
     assert.match(runtimeHelperSource, /deps\.onSkip\("openclaw", state\.sandboxName\)/);
     assert.match(
       policyHelperSource,

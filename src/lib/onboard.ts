@@ -65,6 +65,7 @@ const onboardSession = require("./onboard-session");
 const { ONBOARD_STEP_META, isOnboardStepName, toVisibleStepName } = require("./onboard-fsm");
 const { initializeOnboardRun } = require("./onboard-bootstrap");
 const { hasCompletedOnboardStep } = require("./onboard-flow-state");
+const { runHostPreparationFlow } = require("./onboard-host-flow");
 const { runInferenceSelectionLoop } = require("./onboard-inference-loop");
 const { runPolicySetupFlow } = require("./onboard-policy-flow");
 const { createTrackedOnboardRun } = require("./onboard-recorders");
@@ -5864,65 +5865,34 @@ async function onboard(opts = {}) {
 
     const resumeFlowState = resume ? persistentDriver.flowState : null;
 
-    let gpu;
-    const resumePreflight = resume && resumeFlowState && hasCompletedOnboardStep(resumeFlowState, "preflight");
-    if (resumePreflight) {
-      skippedStepMessage("preflight", "cached");
-      gpu = nim.detectGpu();
-    } else {
-      recordStepStarted("preflight");
-      gpu = await preflight();
-      recordStepComplete("preflight");
-    }
-
-    const gatewayStatus = runCaptureOpenshell(["status"], { ignoreError: true });
-    const gatewayInfo = runCaptureOpenshell(["gateway", "info", "-g", GATEWAY_NAME], {
-      ignoreError: true,
-    });
-    const activeGatewayInfo = runCaptureOpenshell(["gateway", "info"], { ignoreError: true });
-    let gatewayReuseState = getGatewayReuseState(gatewayStatus, gatewayInfo, activeGatewayInfo);
-
-    // Verify the gateway container is actually running — openshell CLI metadata
-    // can be stale after a manual `docker rm`. See #2020.
-    if (gatewayReuseState === "healthy") {
-      const containerState = verifyGatewayContainerRunning();
-      if (containerState === "missing") {
-        console.log("  Gateway metadata is stale (container not running). Cleaning up...");
+    const { gpu } = await runHostPreparationFlow({
+      resume,
+      hasCompletedPreflight:
+        !!resumeFlowState && hasCompletedOnboardStep(resumeFlowState, "preflight"),
+      hasCompletedGateway:
+        !!resumeFlowState && hasCompletedOnboardStep(resumeFlowState, "gateway"),
+      preflight,
+      detectGpu: () => nim.detectGpu(),
+      getGatewayStatus: () => runCaptureOpenshell(["status"], { ignoreError: true }),
+      getNamedGatewayInfo: () =>
+        runCaptureOpenshell(["gateway", "info", "-g", GATEWAY_NAME], { ignoreError: true }),
+      getActiveGatewayInfo: () => runCaptureOpenshell(["gateway", "info"], { ignoreError: true }),
+      getGatewayReuseState,
+      verifyGatewayContainerRunning,
+      stopDashboardForward: () => {
         runOpenshell(["forward", "stop", String(DASHBOARD_PORT)], { ignoreError: true });
-        destroyGateway();
+      },
+      destroyGateway,
+      clearRegistryAll: () => {
         registry.clearAll();
-        gatewayReuseState = "missing";
-        console.log("  ✓ Stale gateway metadata cleaned up");
-      } else if (containerState === "unknown") {
-        console.log("  Warning: could not verify gateway container state (Docker may be unavailable). Proceeding with cached health status.");
-      }
-    }
-
-    const canReuseHealthyGateway = gatewayReuseState === "healthy";
-    const recordedGatewayComplete =
-      resume && resumeFlowState && hasCompletedOnboardStep(resumeFlowState, "gateway");
-    const resumeGateway = recordedGatewayComplete && canReuseHealthyGateway;
-    if (resumeGateway) {
-      skippedStepMessage("gateway", "running");
-    } else if (!resume && canReuseHealthyGateway) {
-      skippedStepMessage("gateway", "running", "reuse");
-      note("  Reusing healthy NemoClaw gateway.");
-    } else {
-      if (recordedGatewayComplete) {
-        if (gatewayReuseState === "active-unnamed") {
-          note("  [resume] Gateway is active but named metadata is missing; recreating it safely.");
-        } else if (gatewayReuseState === "foreign-active") {
-          note("  [resume] A different OpenShell gateway is active; NemoClaw will not reuse it.");
-        } else if (gatewayReuseState === "stale") {
-          note("  [resume] Recorded gateway is unhealthy; recreating it.");
-        } else {
-          note("  [resume] Recorded gateway state is unavailable; recreating it.");
-        }
-      }
-      recordStepStarted("gateway");
-      await startGateway(gpu);
-      recordStepComplete("gateway");
-    }
+      },
+      startGateway,
+      onNote: note,
+      onLog: console.log,
+      onSkip: skippedStepMessage,
+      onStartStep: recordStepStarted,
+      onCompleteStep: recordStepComplete,
+    });
 
     let sandboxName = session?.sandboxName || null;
     let model = session?.model || null;
