@@ -83,6 +83,15 @@ const {
   validateOpenAiLikeSelection: validateOpenAiLikeSelectionWithDeps,
 } = require("./onboard-inference-validation");
 const {
+  buildProviderArgs: buildProviderArgsWithDeps,
+  detectMessagingCredentialRotation: detectMessagingCredentialRotationWithDeps,
+  hashCredential: hashCredentialWithDeps,
+  makeConflictProbe: makeConflictProbeWithDeps,
+  providerExistsInGateway: providerExistsInGatewayWithDeps,
+  upsertMessagingProviders: upsertMessagingProvidersWithDeps,
+  upsertProvider: upsertProviderWithDeps,
+} = require("./onboard-provider-management");
+const {
   SANDBOX_BASE_IMAGE,
   SANDBOX_BASE_TAG,
   getSandboxInferenceConfig: getSandboxInferenceConfigWithDeps,
@@ -580,156 +589,42 @@ async function promptValidationRecovery(label, recovery, credentialEnv = null, h
   );
 }
 
-/**
- * Build the argument array for an `openshell provider create` or `update` command.
- * @param {"create"|"update"} action - Whether to create or update.
- * @param {string} name - Provider name.
- * @param {string} type - Provider type (e.g. "openai", "anthropic", "generic").
- * @param {string} credentialEnv - Credential environment variable name.
- * @param {string|null} baseUrl - Optional base URL for API-compatible endpoints.
- * @returns {string[]} Argument array for runOpenshell().
- */
-function buildProviderArgs(action, name, type, credentialEnv, baseUrl) {
-  const args =
-    action === "create"
-      ? ["provider", "create", "--name", name, "--type", type, "--credential", credentialEnv]
-      : ["provider", "update", name, "--credential", credentialEnv];
-  if (baseUrl && type === "openai") {
-    args.push("--config", `OPENAI_BASE_URL=${baseUrl}`);
-  } else if (baseUrl && type === "anthropic") {
-    args.push("--config", `ANTHROPIC_BASE_URL=${baseUrl}`);
-  }
-  return args;
-}
-
-/**
- * Create or update an OpenShell provider in the gateway.
- *
- * Checks whether the provider already exists via `openshell provider get`;
- * uses `create` for new providers and `update` for existing ones.
- * @param {string} name - Provider name (e.g. "discord-bridge", "inference").
- * @param {string} type - Provider type ("openai", "anthropic", "generic").
- * @param {string} credentialEnv - Environment variable name for the credential.
- * @param {string|null} baseUrl - Optional base URL for the provider endpoint.
- * @param {Record<string, string>} [env={}] - Environment variables for the openshell command.
- * @returns {{ ok: boolean, status?: number, message?: string }}
- */
-function upsertProvider(name, type, credentialEnv, baseUrl, env = {}) {
-  const exists = providerExistsInGateway(name);
-  const action = exists ? "update" : "create";
-  const args = buildProviderArgs(action, name, type, credentialEnv, baseUrl);
-  const runOpts = { ignoreError: true, env, stdio: ["ignore", "pipe", "pipe"] };
-  const result = runOpenshell(args, runOpts);
-  if (result.status !== 0) {
-    const output =
-      compactText(redact(`${result.stderr || ""}`)) ||
-      compactText(redact(`${result.stdout || ""}`)) ||
-      `Failed to ${action} provider '${name}'.`;
-    return { ok: false, status: result.status || 1, message: output };
-  }
-  return { ok: true };
-}
-
-/**
- * Upsert all messaging providers that have tokens configured.
- * Returns the list of provider names that were successfully created/updated.
- * Exits the process if any upsert fails.
- * @param {Array<{name: string, envKey: string, token: string|null}>} tokenDefs
- * @returns {string[]} Provider names that were upserted.
- */
-function upsertMessagingProviders(tokenDefs) {
-  const providers = [];
-  for (const { name, envKey, token } of tokenDefs) {
-    if (!token) continue;
-    const result = upsertProvider(name, "generic", envKey, null, { [envKey]: token });
-    if (!result.ok) {
-      console.error(`\n  ✗ Failed to create messaging provider '${name}': ${result.message}`);
-      process.exit(1);
-    }
-    providers.push(name);
-  }
-  return providers;
-}
-
-/**
- * Check whether an OpenShell provider exists in the gateway.
- *
- * Queries the gateway-level provider registry via `openshell provider get`.
- * Does NOT verify that the provider is attached to a specific sandbox —
- * OpenShell CLI does not currently expose a sandbox-scoped provider query.
- * @param {string} name - Provider name to look up (e.g. "discord-bridge").
- * @returns {boolean} True if the provider exists in the gateway.
- */
-function providerExistsInGateway(name) {
-  const result = runOpenshell(["provider", "get", name], {
-    ignoreError: true,
-    stdio: ["ignore", "ignore", "ignore"],
-  });
-  return result.status === 0;
-}
-
-/**
- * Compute a SHA-256 hash of a credential value for change detection.
- * Stored in the sandbox registry so we can detect rotation on reuse
- * without needing to read the credential back from OpenShell.
- * @param {string} value - Credential value to hash.
- * @returns {string|null} Hex-encoded SHA-256 hash, or null if value is falsy.
- */
-function hashCredential(value) {
-  if (!value) return null;
-  return crypto.createHash("sha256").update(String(value).trim()).digest("hex");
-}
-
-/**
- * Detect whether any messaging provider credential has been rotated since
- * the sandbox was created, by comparing SHA-256 hashes of the current
- * token values against hashes stored in the sandbox registry.
- *
- * Returns `changed: false` for legacy sandboxes that have no stored hashes
- * (conservative — avoids unnecessary rebuilds after upgrade).
- *
- * @param {string} sandboxName - Name of the sandbox to check.
- * @param {Array<{name: string, envKey: string, token: string|null}>} tokenDefs
- * @returns {{ changed: boolean, changedProviders: string[] }}
- */
-function detectMessagingCredentialRotation(sandboxName, tokenDefs) {
-  const sb = registry.getSandbox(sandboxName);
-  const storedHashes = sb?.providerCredentialHashes || {};
-  const changedProviders = [];
-  for (const { name, envKey, token } of tokenDefs) {
-    if (!token) continue;
-    const storedHash = storedHashes[envKey];
-    if (!storedHash) continue;
-    if (storedHash !== hashCredential(token)) {
-      changedProviders.push(name);
-    }
-  }
-  return { changed: changedProviders.length > 0, changedProviders };
-}
-
-// Tri-state probe factory for messaging-conflict backfill. An upfront liveness
-// check is necessary because `openshell provider get` exits non-zero for both
-// "provider not attached" and "gateway unreachable"; without the liveness
-// gate, a transient gateway failure would be recorded as "no providers" and
-// permanently suppress future backfill retries.
-function makeConflictProbe() {
-  let gatewayAlive = null;
-  const isGatewayAlive = () => {
-    if (gatewayAlive === null) {
-      const result = runCaptureOpenshell(["sandbox", "list"], { ignoreError: true });
-      // runCaptureOpenshell returns stdout/stderr as a single string; treat
-      // any non-empty output as a sign openshell answered. Empty output with
-      // ignoreError typically means the binary failed to produce anything.
-      gatewayAlive = typeof result === "string" && result.length > 0;
-    }
-    return gatewayAlive;
-  };
+function getProviderManagementDeps() {
   return {
-    providerExists: (name) => {
-      if (!isGatewayAlive()) return "error";
-      return providerExistsInGateway(name) ? "present" : "absent";
-    },
+    runOpenshell,
+    compactText,
+    redact,
+    registry,
+    runCaptureOpenshell,
   };
+}
+
+function buildProviderArgs(action, name, type, credentialEnv, baseUrl) {
+  return buildProviderArgsWithDeps(action, name, type, credentialEnv, baseUrl);
+}
+
+function upsertProvider(name, type, credentialEnv, baseUrl, env = {}) {
+  return upsertProviderWithDeps(name, type, credentialEnv, baseUrl, env, getProviderManagementDeps());
+}
+
+function upsertMessagingProviders(tokenDefs) {
+  return upsertMessagingProvidersWithDeps(tokenDefs, getProviderManagementDeps());
+}
+
+function providerExistsInGateway(name) {
+  return providerExistsInGatewayWithDeps(name, getProviderManagementDeps());
+}
+
+function hashCredential(value) {
+  return hashCredentialWithDeps(value);
+}
+
+function detectMessagingCredentialRotation(sandboxName, tokenDefs) {
+  return detectMessagingCredentialRotationWithDeps(sandboxName, tokenDefs, getProviderManagementDeps());
+}
+
+function makeConflictProbe() {
+  return makeConflictProbeWithDeps(getProviderManagementDeps());
 }
 
 function verifyInferenceRoute(_provider, _model) {

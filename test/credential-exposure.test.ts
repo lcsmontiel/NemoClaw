@@ -20,6 +20,13 @@ const ONBOARD_INFERENCE_VALIDATION_TS = path.join(
   "lib",
   "onboard-inference-validation.ts",
 );
+const ONBOARD_PROVIDER_MANAGEMENT_TS = path.join(
+  import.meta.dirname,
+  "..",
+  "src",
+  "lib",
+  "onboard-provider-management.ts",
+);
 const ONBOARD_SANDBOX_CREATE_TS = path.join(
   import.meta.dirname,
   "..",
@@ -79,7 +86,7 @@ describe("credential exposure in process arguments", () => {
   });
 
   it("onboard.js --credential flags pass env var names only", () => {
-    const src = fs.readFileSync(ONBOARD_JS, "utf-8");
+    const src = fs.readFileSync(ONBOARD_PROVIDER_MANAGEMENT_TS, "utf-8");
 
     expect(src).toMatch(/"--credential", credentialEnv/);
     expect(src).not.toMatch(/"--credential",\s*["'][A-Z_]+=/);

@@ -2093,15 +2093,15 @@ const { setupInference } = require(${onboardPath});
 
   it("checks provider existence before create/update to avoid AlreadyExists noise (#1155)", () => {
     const source = fs.readFileSync(
-      path.join(import.meta.dirname, "..", "src", "lib", "onboard.ts"),
+      path.join(import.meta.dirname, "..", "src", "lib", "onboard-provider-management.ts"),
       "utf-8",
     );
 
     // upsertProvider must check existence first so it never triggers AlreadyExists.
-    assert.match(source, /providerExistsInGateway\(name\)/);
+    assert.match(source, /providerExistsInGateway\(name, deps\)/);
     assert.match(source, /exists \? "update" : "create"/);
     // Only one openshell call should be made (no create-then-update fallback).
-    assert.match(source, /const result = runOpenshell\(args, runOpts\)/);
+    assert.match(source, /const result = deps\.runOpenshell\(args, runOpts\)/);
   });
 
   it("marks the unused agent_setup/openclaw sibling step as skipped (#1834)", () => {
