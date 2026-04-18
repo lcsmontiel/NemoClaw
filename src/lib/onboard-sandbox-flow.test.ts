@@ -2,8 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, it, vi } from "vitest";
-
-import { runSandboxProvisioningFlow } from "./onboard-sandbox-flow";
+// Import from compiled dist/ so coverage is attributed correctly.
+import { runSandboxProvisioningFlow } from "../../dist/lib/onboard-sandbox-flow";
 
 describe("runSandboxProvisioningFlow", () => {
   it("configures messaging and creates a sandbox on a fresh flow", async () => {

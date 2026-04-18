@@ -2,21 +2,34 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import fs from "node:fs";
+import { createRequire } from "node:module";
 import os from "node:os";
 import path from "node:path";
 
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
+const require = createRequire(import.meta.url);
+const bootstrapDistPath = require.resolve("../../dist/lib/onboard-bootstrap");
+const persistentDriverDistPath = require.resolve("../../dist/lib/onboard-persistent-driver");
+const flowStateDistPath = require.resolve("../../dist/lib/onboard-flow-state");
+const sessionDistPath = require.resolve("../../dist/lib/onboard-session");
 const originalHome = process.env.HOME;
 let tmpDir: string;
 
 beforeEach(() => {
   tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-bootstrap-"));
   process.env.HOME = tmpDir;
+  delete require.cache[bootstrapDistPath];
+  delete require.cache[persistentDriverDistPath];
+  delete require.cache[flowStateDistPath];
+  delete require.cache[sessionDistPath];
 });
 
 afterEach(() => {
-  vi.resetModules();
+  delete require.cache[bootstrapDistPath];
+  delete require.cache[persistentDriverDistPath];
+  delete require.cache[flowStateDistPath];
+  delete require.cache[sessionDistPath];
   fs.rmSync(tmpDir, { recursive: true, force: true });
   if (originalHome === undefined) {
     delete process.env.HOME;
@@ -26,8 +39,8 @@ afterEach(() => {
 });
 
 describe("initializeOnboardRun", () => {
-  it("creates a fresh session and resolves --from paths", async () => {
-    const { initializeOnboardRun } = await import("./onboard-bootstrap");
+  it("creates a fresh session and resolves --from paths", () => {
+    const { initializeOnboardRun } = require("../../dist/lib/onboard-bootstrap");
 
     const result = initializeOnboardRun({
       resume: false,
@@ -43,11 +56,13 @@ describe("initializeOnboardRun", () => {
     expect(result.value.session.mode).toBe("non-interactive");
     expect(result.value.session.agent).toBe("hermes");
     expect(result.value.fromDockerfile).toBe(path.resolve("./Dockerfile.custom"));
-    expect(result.value.driver.session?.metadata.fromDockerfile).toBe(path.resolve("./Dockerfile.custom"));
+    expect(result.value.driver.session?.metadata.fromDockerfile).toBe(
+      path.resolve("./Dockerfile.custom"),
+    );
   });
 
-  it("returns a friendly error when no resumable session exists", async () => {
-    const { initializeOnboardRun } = await import("./onboard-bootstrap");
+  it("returns a friendly error when no resumable session exists", () => {
+    const { initializeOnboardRun } = require("../../dist/lib/onboard-bootstrap");
 
     const result = initializeOnboardRun({
       resume: true,
@@ -62,9 +77,9 @@ describe("initializeOnboardRun", () => {
     });
   });
 
-  it("reports resume conflicts using the shared formatter", async () => {
-    const onboardSession = await import("./onboard-session");
-    const { initializeOnboardRun } = await import("./onboard-bootstrap");
+  it("reports resume conflicts using the shared formatter", () => {
+    const onboardSession = require("../../dist/lib/onboard-session");
+    const { initializeOnboardRun } = require("../../dist/lib/onboard-bootstrap");
 
     onboardSession.saveSession(
       onboardSession.createSession({
@@ -79,7 +94,7 @@ describe("initializeOnboardRun", () => {
       mode: "interactive",
       requestedFromDockerfile: null,
       requestedAgent: null,
-      getResumeConflicts: (session) => [
+      getResumeConflicts: (session: { sandboxName: string | null; provider: string | null }) => [
         { field: "sandbox", requested: "beta", recorded: session.sandboxName },
         { field: "provider", requested: "openai-api", recorded: session.provider },
       ],
@@ -96,9 +111,9 @@ describe("initializeOnboardRun", () => {
     });
   });
 
-  it("loads a resumable session, reuses the recorded Dockerfile, and clears failure state", async () => {
-    const onboardSession = await import("./onboard-session");
-    const { initializeOnboardRun } = await import("./onboard-bootstrap");
+  it("loads a resumable session, reuses the recorded Dockerfile, and clears failure state", () => {
+    const onboardSession = require("../../dist/lib/onboard-session");
+    const { initializeOnboardRun } = require("../../dist/lib/onboard-bootstrap");
 
     onboardSession.saveSession(
       onboardSession.createSession({

@@ -3,14 +3,15 @@
 
 import { describe, expect, it } from "vitest";
 
+// Import from compiled dist/ so coverage is attributed correctly.
 import {
   deriveOnboardFlowState,
   getEffectiveMessagingStepState,
   getResumeExecutablePhase,
   hasCompletedOnboardStep,
   hasReachedOnboardPhase,
-} from "./onboard-flow-state";
-import { createSession } from "./onboard-session";
+} from "../../dist/lib/onboard-flow-state";
+import { createSession } from "../../dist/lib/onboard-session";
 
 describe("onboard-flow-state", () => {
   it("maps resumable checkpoints to the next canonical phase", () => {

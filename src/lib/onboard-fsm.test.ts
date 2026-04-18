@@ -3,6 +3,7 @@
 
 import { describe, expect, expectTypeOf, it } from "vitest";
 
+// Import from compiled dist/ so coverage is attributed correctly.
 import {
   createEmptyStepLedger,
   createInitialOnboardState,
@@ -10,7 +11,7 @@ import {
   ONBOARD_STEP_ALIAS_TO_VISIBLE,
   ONBOARD_STEP_META,
   transitionOnboardState,
-} from "./onboard-fsm";
+} from "../../dist/lib/onboard-fsm";
 
 describe("onboard-fsm", () => {
   it("defines numbered visible step metadata for all user-facing steps", () => {

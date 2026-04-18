@@ -2,8 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, it, vi } from "vitest";
-
-import { runInferenceSelectionLoop } from "./onboard-inference-loop";
+// Import from compiled dist/ so coverage is attributed correctly.
+import { runInferenceSelectionLoop } from "../../dist/lib/onboard-inference-loop";
 
 describe("runInferenceSelectionLoop", () => {
   it("runs provider selection and inference setup on a fresh flow", async () => {

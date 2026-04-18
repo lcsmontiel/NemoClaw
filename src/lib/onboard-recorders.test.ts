@@ -2,21 +2,31 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import fs from "node:fs";
+import { createRequire } from "node:module";
 import os from "node:os";
 import path from "node:path";
 
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
+const require = createRequire(import.meta.url);
+const recordersDistPath = require.resolve("../../dist/lib/onboard-recorders");
+const driverDistPath = require.resolve("../../dist/lib/onboard-persistent-driver");
+const sessionDistPath = require.resolve("../../dist/lib/onboard-session");
 const originalHome = process.env.HOME;
 let tmpDir: string;
 
 beforeEach(() => {
   tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-recorders-"));
   process.env.HOME = tmpDir;
+  delete require.cache[recordersDistPath];
+  delete require.cache[driverDistPath];
+  delete require.cache[sessionDistPath];
 });
 
 afterEach(() => {
-  vi.resetModules();
+  delete require.cache[recordersDistPath];
+  delete require.cache[driverDistPath];
+  delete require.cache[sessionDistPath];
   fs.rmSync(tmpDir, { recursive: true, force: true });
   if (originalHome === undefined) {
     delete process.env.HOME;
@@ -26,10 +36,10 @@ afterEach(() => {
 });
 
 describe("createTrackedOnboardRun", () => {
-  it("keeps the caller's session reference in sync with persisted driver updates", async () => {
-    const onboardSession = await import("./onboard-session");
-    const { PersistentOnboardDriver } = await import("./onboard-persistent-driver");
-    const { createTrackedOnboardRun } = await import("./onboard-recorders");
+  it("keeps the caller's session reference in sync with persisted driver updates", () => {
+    const onboardSession = require("../../dist/lib/onboard-session");
+    const { PersistentOnboardDriver } = require("../../dist/lib/onboard-persistent-driver");
+    const { createTrackedOnboardRun } = require("../../dist/lib/onboard-recorders");
 
     const initialSession = onboardSession.saveSession(
       onboardSession.createSession({ sandboxName: "alpha" }),

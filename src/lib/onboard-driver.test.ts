@@ -2,8 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, it } from "vitest";
-
-import { InMemoryOnboardDriver } from "./onboard-driver";
+// Import from compiled dist/ so coverage is attributed correctly.
+import { InMemoryOnboardDriver } from "../../dist/lib/onboard-driver";
 
 describe("InMemoryOnboardDriver", () => {
   it("round-trips resumable checkpoints through persisted sessions", () => {

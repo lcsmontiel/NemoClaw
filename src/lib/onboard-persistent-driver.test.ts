@@ -2,21 +2,28 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import fs from "node:fs";
+import { createRequire } from "node:module";
 import os from "node:os";
 import path from "node:path";
 
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
+const require = createRequire(import.meta.url);
+const driverDistPath = require.resolve("../../dist/lib/onboard-persistent-driver");
+const sessionDistPath = require.resolve("../../dist/lib/onboard-session");
 const originalHome = process.env.HOME;
 let tmpDir: string;
 
 beforeEach(() => {
   tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-persistent-driver-"));
   process.env.HOME = tmpDir;
+  delete require.cache[driverDistPath];
+  delete require.cache[sessionDistPath];
 });
 
 afterEach(() => {
-  vi.resetModules();
+  delete require.cache[driverDistPath];
+  delete require.cache[sessionDistPath];
   fs.rmSync(tmpDir, { recursive: true, force: true });
   if (originalHome === undefined) {
     delete process.env.HOME;
@@ -26,9 +33,9 @@ afterEach(() => {
 });
 
 describe("PersistentOnboardDriver", () => {
-  it("tracks persisted step progress and canonical completion checks", async () => {
-    const onboardSession = await import("./onboard-session");
-    const { PersistentOnboardDriver } = await import("./onboard-persistent-driver");
+  it("tracks persisted step progress and canonical completion checks", () => {
+    const onboardSession = require("../../dist/lib/onboard-session");
+    const { PersistentOnboardDriver } = require("../../dist/lib/onboard-persistent-driver");
 
     onboardSession.saveSession(onboardSession.createSession({ sandboxName: "alpha" }));
     const driver = new PersistentOnboardDriver({ resume: true, requestedSandboxName: "alpha" });
@@ -46,9 +53,9 @@ describe("PersistentOnboardDriver", () => {
     expect(driver.flowState.phase).toBe("provider_selection");
   });
 
-  it("persists messaging and runtime aliases through the shared reducers", async () => {
-    const onboardSession = await import("./onboard-session");
-    const { PersistentOnboardDriver } = await import("./onboard-persistent-driver");
+  it("persists messaging and runtime aliases through the shared reducers", () => {
+    const onboardSession = require("../../dist/lib/onboard-session");
+    const { PersistentOnboardDriver } = require("../../dist/lib/onboard-persistent-driver");
 
     onboardSession.saveSession(
       onboardSession.createSession({
@@ -61,7 +68,11 @@ describe("PersistentOnboardDriver", () => {
 
     driver.completeStep("messaging", { messagingChannels: ["telegram"] });
     driver.completeStep("sandbox", { sandboxName: "alpha" });
-    driver.completeStep("openclaw", { sandboxName: "alpha", provider: "openai-api", model: "gpt-5.4" });
+    driver.completeStep("openclaw", {
+      sandboxName: "alpha",
+      provider: "openai-api",
+      model: "gpt-5.4",
+    });
 
     const session = driver.requiredSession;
     expect(session.messagingChannels).toEqual(["telegram"]);
@@ -71,9 +82,9 @@ describe("PersistentOnboardDriver", () => {
     expect(driver.hasCompleted("runtime_setup")).toBe(true);
   });
 
-  it("records failures and final completion using persisted state", async () => {
-    const onboardSession = await import("./onboard-session");
-    const { PersistentOnboardDriver } = await import("./onboard-persistent-driver");
+  it("records failures and final completion using persisted state", () => {
+    const onboardSession = require("../../dist/lib/onboard-session");
+    const { PersistentOnboardDriver } = require("../../dist/lib/onboard-persistent-driver");
 
     onboardSession.saveSession(onboardSession.createSession({ sandboxName: "alpha" }));
     const driver = new PersistentOnboardDriver({ resume: true, requestedSandboxName: "alpha" });

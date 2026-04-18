@@ -2,8 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, it, vi } from "vitest";
-
-import { runPolicySetupFlow } from "./onboard-policy-flow";
+// Import from compiled dist/ so coverage is attributed correctly.
+import { runPolicySetupFlow } from "../../dist/lib/onboard-policy-flow";
 
 describe("runPolicySetupFlow", () => {
   it("applies the permissive policy after the sandbox is ready", async () => {

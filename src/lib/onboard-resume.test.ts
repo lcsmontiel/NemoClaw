@@ -2,13 +2,13 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, it } from "vitest";
-
-import { createSession } from "./onboard-session";
+// Import from compiled dist/ so coverage is attributed correctly.
+import { createSession } from "../../dist/lib/onboard-session";
 import {
   buildResumeConflictLines,
   collectResumeConfigConflicts,
   detectResumeSandboxConflict,
-} from "./onboard-resume";
+} from "../../dist/lib/onboard-resume";
 
 describe("onboard-resume", () => {
   it("detects sandbox conflicts only when requested and recorded names differ", () => {

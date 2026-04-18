@@ -2,8 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, it, vi } from "vitest";
-
-import { runRuntimeSetupFlow } from "./onboard-runtime-flow";
+// Import from compiled dist/ so coverage is attributed correctly.
+import { runRuntimeSetupFlow } from "../../dist/lib/onboard-runtime-flow";
 
 describe("runRuntimeSetupFlow", () => {
   it("delegates agent setup and skips the openclaw sibling step", async () => {
