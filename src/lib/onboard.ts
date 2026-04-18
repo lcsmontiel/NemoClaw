@@ -75,6 +75,7 @@ const {
   getDashboardGuidanceLines,
   getWslHostAddress,
 } = require("./onboard-dashboard");
+const { printOnboardDashboard } = require("./onboard-dashboard-print");
 const { runOnboardingEntry } = require("./onboard-entry");
 const { createOnboardingOrchestratorDeps } = require("./onboard-orchestrator-deps");
 const { runOnboardingOrchestrator } = require("./onboard-orchestrator");
@@ -5488,79 +5489,20 @@ function getDashboardAccessInfo(sandboxName, options = {}) {
 }
 
 function printDashboard(sandboxName, model, provider, nimContainer = null, agent = null) {
-  const nimStat = nimContainer ? nim.nimStatusByName(nimContainer) : nim.nimStatus(sandboxName);
-  const nimLabel = nimStat.running ? "running" : "not running";
-
-  let providerLabel = provider;
-  if (provider === "nvidia-prod" || provider === "nvidia-nim") providerLabel = "NVIDIA Endpoints";
-  else if (provider === "openai-api") providerLabel = "OpenAI";
-  else if (provider === "anthropic-prod") providerLabel = "Anthropic";
-  else if (provider === "compatible-anthropic-endpoint")
-    providerLabel = "Other Anthropic-compatible endpoint";
-  else if (provider === "gemini-api") providerLabel = "Google Gemini";
-  else if (provider === "compatible-endpoint") providerLabel = "Other OpenAI-compatible endpoint";
-  else if (provider === "vllm-local") providerLabel = "Local vLLM";
-  else if (provider === "ollama-local") providerLabel = "Local Ollama";
-
-  const token = fetchGatewayAuthTokenFromSandbox(sandboxName);
-  const dashboardAccess = getDashboardAccessInfo(sandboxName, { token });
-  const guidanceLines = getDashboardGuidanceLines(dashboardAccess);
-
-  console.log("");
-  console.log(`  ${"─".repeat(50)}`);
-  // console.log(`  Dashboard    http://localhost:${DASHBOARD_PORT}/`);
-  console.log(`  Sandbox      ${sandboxName} (Landlock + seccomp + netns)`);
-  console.log(`  Model        ${model} (${providerLabel})`);
-  console.log(`  NIM          ${nimLabel}`);
-  console.log(`  ${"─".repeat(50)}`);
-  console.log(`  Run:         nemoclaw ${sandboxName} connect`);
-  console.log(`  Status:      nemoclaw ${sandboxName} status`);
-  console.log(`  Logs:        nemoclaw ${sandboxName} logs --follow`);
-  console.log("");
-  if (agent) {
-    agentOnboard.printDashboardUi(sandboxName, token, agent, {
-      note,
-      buildControlUiUrls: (tokenValue, port) => {
-        const urls = buildControlUiUrls(tokenValue, port);
-        const wslHostAddress = getWslHostAddress();
-        if (wslHostAddress) {
-          const wslUrl = buildAuthenticatedDashboardUrl(
-            `http://${wslHostAddress}:${port}/`,
-            tokenValue,
-          );
-          if (!urls.includes(wslUrl)) {
-            urls.push(wslUrl);
-          }
-        }
-        return urls;
-      },
-    });
-  } else if (token) {
-    console.log("  OpenClaw UI (tokenized URL; treat it like a password)");
-    for (const line of guidanceLines) {
-      console.log(`  ${line}`);
-    }
-    for (const entry of dashboardAccess) {
-      console.log(`  ${entry.label}: ${entry.url}`);
-    }
-  } else {
-    note("  Could not read gateway token from the sandbox (download failed).");
-    console.log("  OpenClaw UI");
-    for (const line of guidanceLines) {
-      console.log(`  ${line}`);
-    }
-    for (const entry of dashboardAccess) {
-      console.log(`  ${entry.label}: ${entry.url}`);
-    }
-    console.log(
-      `  Token:       nemoclaw ${sandboxName} connect  →  jq -r '.gateway.auth.token' /sandbox/.openclaw/openclaw.json`,
-    );
-    console.log(
-      `               append  #token=<token>  to the URL, or see /tmp/gateway.log inside the sandbox.`,
-    );
-  }
-  console.log(`  ${"─".repeat(50)}`);
-  console.log("");
+  return printOnboardDashboard(sandboxName, model, provider, nimContainer, agent, {
+    getNimStatus: (targetSandboxName, targetNimContainer) =>
+      targetNimContainer ? nim.nimStatusByName(targetNimContainer) : nim.nimStatus(targetSandboxName),
+    fetchGatewayAuthTokenFromSandbox,
+    getDashboardAccessInfo: (targetSandboxName, options) =>
+      getDashboardAccessInfo(targetSandboxName, options),
+    getDashboardGuidanceLines,
+    note,
+    log: console.log,
+    printAgentDashboardUi: agentOnboard.printDashboardUi,
+    buildControlUiUrls,
+    getWslHostAddress,
+    buildAuthenticatedDashboardUrl,
+  });
 }
 
 const TOTAL_ONBOARD_STEPS = 8;
