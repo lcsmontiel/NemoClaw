@@ -976,20 +976,20 @@ describe("onboard helpers", () => {
 
   it("passes --port GATEWAY_PORT through every gateway start path", () => {
     const source = fs.readFileSync(
-      path.join(import.meta.dirname, "..", "src", "lib", "onboard.ts"),
+      path.join(import.meta.dirname, "..", "src", "lib", "onboard-gateway-runtime.ts"),
       "utf-8",
     );
 
     // Primary start path (startGatewayWithOptions) builds gwArgs with --port.
     assert.match(
       source,
-      /const gwArgs = \["--name", GATEWAY_NAME, "--port", String\(GATEWAY_PORT\)\]/,
+      /const gwArgs = \["--name", deps\.gatewayName, "--port", String\(deps\.gatewayPort\)\]/,
     );
 
     // Recovery start path (recoverGatewayRuntime) also passes --port.
     assert.match(
       source,
-      /runOpenshell\(\s*\["gateway", "start", "--name", GATEWAY_NAME, "--port", String\(GATEWAY_PORT\)\]/,
+      /\["gateway", "start", "--name", deps\.gatewayName, "--port", String\(deps\.gatewayPort\)\]/,
     );
   });
 

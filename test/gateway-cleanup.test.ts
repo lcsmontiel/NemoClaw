@@ -20,17 +20,20 @@ describe("gateway cleanup: Docker volumes removed on failure (#17)", () => {
     expect(content.includes("docker volume") && content.includes("openshell-cluster")).toBe(true);
   });
 
-  it("onboard.js: volume cleanup runs on gateway start failure", () => {
-    const content = fs.readFileSync(path.join(ROOT, "src/lib/onboard.ts"), "utf-8");
-    const startGwBlock = content.match(/async function startGatewayWithOptions[\s\S]*?^}/m);
+  it("gateway runtime helper: volume cleanup runs on gateway start failure", () => {
+    const content = fs.readFileSync(
+      path.join(ROOT, "src/lib/onboard-gateway-runtime.ts"),
+      "utf-8",
+    );
+    const startGwBlock = content.match(/export async function startGatewayWithOptions[\s\S]*?^}/m);
     expect(startGwBlock).toBeTruthy();
 
     // Current behavior:
     // 1. stale gateway is detected but NOT destroyed upfront — gateway start
     //    can recover the container without wiping metadata/certs
     // 2. destroyGateway() runs inside the retry loop only on genuine failure
-    expect(startGwBlock[0].includes("if (hasStaleGateway(gwInfo))")).toBe(true);
-    expect(startGwBlock[0]).toContain("destroyGateway()");
+    expect(startGwBlock[0].includes("if (deps.hasStaleGateway(gwInfo))")).toBe(true);
+    expect(startGwBlock[0]).toContain("deps.destroyGateway()");
   });
 
   it("uninstall.sh: includes Docker volume cleanup", () => {

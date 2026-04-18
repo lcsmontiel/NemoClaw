@@ -65,6 +65,11 @@ const onboardSession = require("./onboard-session");
 const { ONBOARD_STEP_META, isOnboardStepName, toVisibleStepName } = require("./onboard-fsm");
 const { initializeOnboardRun } = require("./onboard-bootstrap");
 const {
+  getGatewayStartEnv: buildGatewayStartEnv,
+  recoverGatewayRuntime: recoverGatewayRuntimeWithDeps,
+  startGatewayWithOptions: startGatewayWithOptionsWithDeps,
+} = require("./onboard-gateway-runtime");
+const {
   buildAuthenticatedDashboardUrl,
   ensureDashboardForward: ensureDashboardForwardWithDeps,
   fetchGatewayAuthTokenFromSandbox: fetchGatewayAuthTokenFromSandboxWithDeps,
@@ -2530,169 +2535,39 @@ async function preflight() {
 
 /** Start the OpenShell gateway with retry logic and post-start health polling. */
 async function startGatewayWithOptions(_gpu, { exitOnFailure = true } = {}) {
-  step(2, 8, "Starting OpenShell gateway");
-
-  const gatewayStatus = runCaptureOpenshell(["status"], { ignoreError: true });
-  const gwInfo = runCaptureOpenshell(["gateway", "info", "-g", GATEWAY_NAME], {
-    ignoreError: true,
-  });
-  const activeGatewayInfo = runCaptureOpenshell(["gateway", "info"], { ignoreError: true });
-  if (isGatewayHealthy(gatewayStatus, gwInfo, activeGatewayInfo)) {
-    console.log("  ✓ Reusing existing gateway");
-    runOpenshell(["gateway", "select", GATEWAY_NAME], { ignoreError: true });
-    process.env.OPENSHELL_GATEWAY = GATEWAY_NAME;
-    return;
-  }
-
-  // When a stale gateway is detected (metadata exists but container is gone,
-  // e.g. after a Docker/Colima restart), skip the destroy — `gateway start`
-  // can recover the container without wiping metadata and mTLS certs.
-  // The retry loop below will destroy only if start genuinely fails.
-  if (hasStaleGateway(gwInfo)) {
-    console.log("  Stale gateway detected — attempting restart without destroy...");
-  }
-
-  // Clear stale SSH host keys from previous gateway (fixes #768)
-  try {
-    const { execFileSync } = require("child_process");
-    execFileSync("ssh-keygen", ["-R", `openshell-${GATEWAY_NAME}`], { stdio: "ignore" });
-  } catch {
-    /* ssh-keygen -R may fail if entry doesn't exist — safe to ignore */
-  }
-  // Also purge any known_hosts entries matching the gateway hostname pattern
-  const knownHostsPath = path.join(os.homedir(), ".ssh", "known_hosts");
-  if (fs.existsSync(knownHostsPath)) {
-    try {
-      const kh = fs.readFileSync(knownHostsPath, "utf8");
-      const cleaned = pruneKnownHostsEntries(kh);
-      if (cleaned !== kh) fs.writeFileSync(knownHostsPath, cleaned);
-    } catch {
-      /* best-effort cleanup — ignore read/write errors */
-    }
-  }
-
-  const gwArgs = ["--name", GATEWAY_NAME, "--port", String(GATEWAY_PORT)];
-  // Do NOT pass --gpu here. On DGX Spark (and most GPU hosts), inference is
-  // routed through a host-side provider (Ollama, vLLM, or cloud API) — the
-  // sandbox itself does not need direct GPU access. Passing --gpu causes
-  // FailedPrecondition errors when the gateway's k3s device plugin cannot
-  // allocate GPUs. See: https://build.nvidia.com/spark/nemoclaw/instructions
-  const gatewayEnv = getGatewayStartEnv();
-  if (gatewayEnv.OPENSHELL_CLUSTER_IMAGE) {
-    console.log(`  Using pinned OpenShell gateway image: ${gatewayEnv.OPENSHELL_CLUSTER_IMAGE}`);
-  }
-
-  // Retry gateway start with exponential backoff. On some hosts (Horde VMs,
-  // first-run environments) the embedded k3s needs more time than OpenShell's
-  // internal health-check window allows. Retrying after a clean destroy lets
-  // the second attempt benefit from cached images and cleaner cgroup state.
-  // See: https://github.com/NVIDIA/OpenShell/issues/433
-  const retries = exitOnFailure ? 2 : 0;
-  try {
-    await pRetry(
-      async () => {
-        const startResult = await streamGatewayStart(
-          openshellShellCommand(["gateway", "start", ...gwArgs]),
-          {
-            ...process.env,
-            ...gatewayEnv,
-          },
-        );
-        if (startResult.status !== 0) {
-          const lines = String(redact(startResult.output || ""))
-            .split("\n")
-            .map((l) => compactText(l.replace(ANSI_RE, "")))
-            .filter(Boolean)
-            .map((l) => `    ${l}`);
-          if (lines.length > 0) {
-            console.log(`  Gateway start returned before healthy:\n${lines.join("\n")}`);
-          }
-        }
-        console.log("  Waiting for gateway health...");
-
-        // ARM64 (e.g. Raspberry Pi) needs more time: k3s takes 90-180s to init
-        const isArm64 = process.arch === "arm64";
-        // After openshell gateway start returns (container HEALTHY at Layer 1),
-        // poll application-layer connectivity (Layer 2: gRPC, TLS, port mapping).
-        // 60s default gives enough buffer for gRPC init and TLS handshake. (#1830)
-        const healthPollCount = envInt("NEMOCLAW_HEALTH_POLL_COUNT", isArm64 ? 30 : 12);
-        const healthPollInterval = envInt("NEMOCLAW_HEALTH_POLL_INTERVAL", isArm64 ? 10 : 5);
-        for (let i = 0; i < healthPollCount; i++) {
-          // Ensure the gateway is selected before each probe (non-TTY environments
-          // like ARM64 may not have it selected automatically)
-          runCaptureOpenshell(["gateway", "select", GATEWAY_NAME], { ignoreError: true });
-          const status = runCaptureOpenshell(["status"], { ignoreError: true });
-          const namedInfo = runCaptureOpenshell(["gateway", "info", "-g", GATEWAY_NAME], {
-            ignoreError: true,
-          });
-          const currentInfo = runCaptureOpenshell(["gateway", "info"], { ignoreError: true });
-          if (isGatewayHealthy(status, namedInfo, currentInfo)) {
-            return; // success
-          }
-          if (i < healthPollCount - 1) sleep(healthPollInterval);
-        }
-
-        throw new Error("Gateway failed to start");
+  return startGatewayWithOptionsWithDeps(
+    _gpu,
+    {
+      gatewayName: GATEWAY_NAME,
+      gatewayPort: GATEWAY_PORT,
+      scriptsDir: SCRIPTS,
+      processEnv: process.env,
+      processArch: process.arch,
+      showHeader: () => {
+        step(2, 8, "Starting OpenShell gateway");
       },
-      {
-        retries,
-        minTimeout: 10_000,
-        factor: 3,
-        onFailedAttempt: (err) => {
-          console.log(
-            `  Gateway start attempt ${err.attemptNumber} failed. ${err.retriesLeft} retries left...`,
-          );
-          if (err.retriesLeft > 0 && exitOnFailure) {
-            destroyGateway();
-          }
-        },
-      },
-    );
-  } catch {
-    if (exitOnFailure) {
-      console.error(`  Gateway failed to start after ${retries + 1} attempts.`);
-      console.error("  Gateway state preserved for diagnostics.");
-      console.error("");
-      try {
-        const logs = redact(
-          runCaptureOpenshell(["doctor", "logs", "--name", GATEWAY_NAME], {
-            ignoreError: true,
-          }),
-        );
-        if (logs) {
-          console.error("  Gateway logs:");
-          for (const line of String(logs)
-            .split("\n")
-            .map((l) => l.replace(/\r/g, "").replace(ANSI_RE, ""))
-            .filter(Boolean)) {
-            console.error(`    ${line}`);
-          }
-          console.error("");
-        }
-      } catch {
-        // doctor logs unavailable — fall through to manual instructions
-      }
-      console.error("  Troubleshooting:");
-      console.error("    openshell doctor logs --name nemoclaw");
-      console.error("    openshell doctor check");
-      process.exit(1);
-    }
-    throw new Error("Gateway failed to start");
-  }
-
-  console.log("  ✓ Gateway is healthy");
-
-  // CoreDNS fix — k3s-inside-Docker has broken DNS forwarding on all platforms.
-  const runtime = getContainerRuntime();
-  if (shouldPatchCoredns(runtime)) {
-    console.log("  Patching CoreDNS DNS forwarding...");
-    run(`bash "${path.join(SCRIPTS, "fix-coredns.sh")}" ${GATEWAY_NAME} 2>&1 || true`, {
-      ignoreError: true,
-    });
-  }
-  sleep(5);
-  runOpenshell(["gateway", "select", GATEWAY_NAME], { ignoreError: true });
-  process.env.OPENSHELL_GATEWAY = GATEWAY_NAME;
+      log: console.log,
+      error: console.error,
+      exit: (code) => process.exit(code),
+      openshellShellCommand: (args) => openshellShellCommand(args),
+      streamGatewayStart,
+      runCaptureOpenshell,
+      runOpenshell,
+      isGatewayHealthy,
+      hasStaleGateway,
+      redact,
+      compactText,
+      envInt,
+      sleep,
+      getInstalledOpenshellVersion: () => getInstalledOpenshellVersion(),
+      getContainerRuntime,
+      shouldPatchCoredns,
+      run,
+      destroyGateway,
+      pruneKnownHostsEntries,
+    },
+    { exitOnFailure },
+  );
 }
 
 async function startGateway(_gpu) {
@@ -2704,63 +2579,28 @@ async function startGatewayForRecovery(_gpu) {
 }
 
 function getGatewayStartEnv() {
-  const gatewayEnv = {};
-  const openshellVersion = getInstalledOpenshellVersion();
-  const stableGatewayImage = openshellVersion
-    ? `ghcr.io/nvidia/openshell/cluster:${openshellVersion}`
-    : null;
-  if (stableGatewayImage && openshellVersion) {
-    gatewayEnv.OPENSHELL_CLUSTER_IMAGE = stableGatewayImage;
-    gatewayEnv.IMAGE_TAG = openshellVersion;
-  }
-  return gatewayEnv;
+  return buildGatewayStartEnv(getInstalledOpenshellVersion());
 }
 
 async function recoverGatewayRuntime() {
-  runOpenshell(["gateway", "select", GATEWAY_NAME], { ignoreError: true });
-  let status = runCaptureOpenshell(["status"], { ignoreError: true });
-  if (status.includes("Connected") && isSelectedGateway(status)) {
-    process.env.OPENSHELL_GATEWAY = GATEWAY_NAME;
-    return true;
-  }
-
-  const startResult = runOpenshell(
-    ["gateway", "start", "--name", GATEWAY_NAME, "--port", String(GATEWAY_PORT)],
-    {
-      ignoreError: true,
-      env: getGatewayStartEnv(),
-      suppressOutput: true,
-    },
-  );
-  if (startResult.status !== 0) {
-    const diagnostic = compactText(
-      redact(`${startResult.stderr || ""} ${startResult.stdout || ""}`),
-    );
-    console.error(`  Gateway restart failed (exit ${startResult.status}).`);
-    if (diagnostic) {
-      console.error(`  ${diagnostic.slice(0, 240)}`);
-    }
-  }
-  runOpenshell(["gateway", "select", GATEWAY_NAME], { ignoreError: true });
-
-  const recoveryPollCount = envInt("NEMOCLAW_HEALTH_POLL_COUNT", 10);
-  const recoveryPollInterval = envInt("NEMOCLAW_HEALTH_POLL_INTERVAL", 2);
-  for (let i = 0; i < recoveryPollCount; i++) {
-    status = runCaptureOpenshell(["status"], { ignoreError: true });
-    if (status.includes("Connected") && isSelectedGateway(status)) {
-      process.env.OPENSHELL_GATEWAY = GATEWAY_NAME;
-      const runtime = getContainerRuntime();
-      if (shouldPatchCoredns(runtime)) {
-        run(`bash "${path.join(SCRIPTS, "fix-coredns.sh")}" ${GATEWAY_NAME} 2>&1 || true`, {
-          ignoreError: true,
-        });
-      }
-      return true;
-    }
-    if (i < recoveryPollCount - 1) sleep(recoveryPollInterval);
-  }
-
-  return false;
+  return recoverGatewayRuntimeWithDeps({
+    gatewayName: GATEWAY_NAME,
+    gatewayPort: GATEWAY_PORT,
+    processEnv: process.env,
+    runCaptureOpenshell,
+    runOpenshell,
+    isSelectedGateway,
+    getGatewayStartEnv,
+    envInt,
+    sleep,
+    redact,
+    compactText,
+    getContainerRuntime,
+    shouldPatchCoredns,
+    run,
+    scriptsDir: SCRIPTS,
+    error: console.error,
+  });
 }
 
 // ── Step 3: Sandbox ──────────────────────────────────────────────
