@@ -44,10 +44,10 @@ const {
   parseGatewayInference,
 } = require("./inference-config");
 
-// Providers that run on the host and need the local-inference policy preset.
-// Shared constant so getSuggestedPolicyPresets() and setupPoliciesWithSelection()
-// stay in sync.
-const LOCAL_INFERENCE_PROVIDERS = ["ollama-local", "vllm-local"];
+const {
+  getSuggestedPolicyPresets: getSuggestedPolicyPresetsWithDeps,
+  LOCAL_INFERENCE_PROVIDERS,
+} = require("./onboard-policy-suggestions");
 const { inferContainerRuntime, isWsl, shouldPatchCoredns } = require("./platform");
 const { resolveOpenshell } = require("./resolve-openshell");
 const {
@@ -4190,59 +4190,17 @@ const MESSAGING_CHANNELS = [
   },
 ];
 
-// Curl exit codes that indicate a network-level failure (not a token problem).
-// 35 (TLS handshake failure) covers corporate proxies that MITM HTTPS.
-const TELEGRAM_NETWORK_CURL_CODES = new Set([6, 7, 28, 35, 52, 56]);
+const { TELEGRAM_NETWORK_CURL_CODES, checkTelegramReachability: checkTelegramReachabilityWithDeps } = require("./onboard-telegram");
 
 async function checkTelegramReachability(token: string) {
-  const result = runCurlProbe([
-    "-sS",
-    "--connect-timeout", "5",
-    "--max-time", "10",
-    `https://api.telegram.org/bot${token}/getMe`,
-  ]);
-
-  // HTTP 200 with "ok":true — Telegram is reachable and token is valid.
-  if (result.ok) return;
-
-  // HTTP 401 or 404 — token was rejected by Telegram (not a network issue).
-  if (result.httpStatus === 401 || result.httpStatus === 404) {
-    console.log(
-      "  ⚠ Bot token was rejected by Telegram — verify the token is correct.",
-    );
-    return;
-  }
-
-  // Network-level failure — Telegram is unreachable from this host.
-  if (result.curlStatus && TELEGRAM_NETWORK_CURL_CODES.has(result.curlStatus)) {
-    console.log("");
-    console.log("  ⚠ api.telegram.org is not reachable from this host.");
-    console.log("    Telegram integration requires outbound HTTPS access to api.telegram.org.");
-    console.log("    This is commonly blocked by corporate network proxies.");
-
-    if (isNonInteractive()) {
-      console.error("  Aborting onboarding in non-interactive mode due to Telegram network reachability failure.");
-      process.exit(1);
-    } else {
-      const answer = (await promptOrDefault("    Continue anyway? [y/N]: ", null, "n"))
-        .trim()
-        .toLowerCase();
-      if (answer !== "y" && answer !== "yes") {
-        console.log("  Aborting onboarding.");
-        process.exit(1);
-      }
-    }
-    return;
-  }
-
-  // Unexpected probe failure — warn but don't block.
-  if (!result.ok && result.httpStatus > 0) {
-    console.log(
-      `  ⚠ Telegram API returned HTTP ${result.httpStatus} — the bot may not work correctly.`,
-    );
-  } else if (!result.ok) {
-    console.log(`  ⚠ Telegram reachability probe failed: ${result.message}`);
-  }
+  return checkTelegramReachabilityWithDeps(token, {
+    runCurlProbe,
+    isNonInteractive,
+    promptOrDefault,
+    log: console.log,
+    error: console.error,
+    exit: (code) => process.exit(code),
+  });
 }
 
 async function setupMessagingChannels() {
@@ -4448,34 +4406,16 @@ async function setupMessagingChannels() {
 }
 
 function getSuggestedPolicyPresets({ enabledChannels = null, webSearchConfig = null, provider = null } = {}) {
-  const suggestions = ["pypi", "npm"];
-
-  // Auto-suggest local-inference preset when a local provider is selected
-  if (provider && LOCAL_INFERENCE_PROVIDERS.includes(provider)) {
-    suggestions.push("local-inference");
-  }
-  const usesExplicitMessagingSelection = Array.isArray(enabledChannels);
-
-  const maybeSuggestMessagingPreset = (channel, envKey) => {
-    if (usesExplicitMessagingSelection) {
-      if (enabledChannels.includes(channel)) suggestions.push(channel);
-      return;
-    }
-    if (getCredential(envKey) || process.env[envKey]) {
-      suggestions.push(channel);
-      if (process.stdout.isTTY && !isNonInteractive() && process.env.CI !== "true") {
-        console.log(`  Auto-detected: ${envKey} -> suggesting ${channel} preset`);
-      }
-    }
-  };
-
-  maybeSuggestMessagingPreset("telegram", "TELEGRAM_BOT_TOKEN");
-  maybeSuggestMessagingPreset("slack", "SLACK_BOT_TOKEN");
-  maybeSuggestMessagingPreset("discord", "DISCORD_BOT_TOKEN");
-
-  if (webSearchConfig) suggestions.push("brave");
-
-  return suggestions;
+  return getSuggestedPolicyPresetsWithDeps({
+    enabledChannels,
+    webSearchConfig,
+    provider,
+    getCredential,
+    env: process.env,
+    isInteractiveTty: process.stdout.isTTY,
+    isNonInteractive: isNonInteractive(),
+    note: console.log,
+  });
 }
 
 // ── Step 7: OpenClaw ─────────────────────────────────────────────
