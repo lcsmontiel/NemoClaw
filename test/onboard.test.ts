@@ -5220,13 +5220,13 @@ const { createSandbox } = require(${onboardPath});
   });
 
   it("re-prompts on invalid sandbox names instead of exiting in interactive mode", () => {
-    const source = fs.readFileSync(
-      path.join(import.meta.dirname, "..", "src", "lib", "onboard.ts"),
+    const shellSource = fs.readFileSync(
+      path.join(import.meta.dirname, "..", "src", "lib", "onboard-sandbox-name.ts"),
       "utf-8",
     );
     // Extract the promptValidatedSandboxName function body
-    const fnMatch = source.match(
-      /async function promptValidatedSandboxName\(\)\s*\{([\s\S]*?)\n\}/,
+    const fnMatch = shellSource.match(
+      /export async function promptValidatedSandboxName\([\s\S]*?\)\s*:\s*Promise<string>\s*\{([\s\S]*?)\n\}/,
     );
     assert.ok(fnMatch, "promptValidatedSandboxName function not found");
     const fnBody = fnMatch[1];
@@ -5238,7 +5238,7 @@ const { createSandbox } = require(${onboardPath});
     assert.match(fnBody, /Too many invalid attempts/);
     // Non-interactive still exits within this function
     assert.match(fnBody, /isNonInteractive\(\)/);
-    assert.match(fnBody, /process\.exit\(1\)/);
+    assert.match(fnBody, /exit\(1\)/);
   });
 
   it("regression #1881: registry.updateSandbox(model/provider) is called AFTER createSandbox", () => {

@@ -67,6 +67,7 @@ const {
   recoverGatewayRuntime: recoverGatewayRuntimeWithDeps,
   startGatewayWithOptions: startGatewayWithOptionsWithDeps,
 } = require("./onboard-gateway-runtime");
+const { promptValidatedSandboxName: promptValidatedSandboxNameWithDeps } = require("./onboard-sandbox-name");
 const {
   buildAuthenticatedDashboardUrl,
   ensureDashboardForward: ensureDashboardForwardWithDeps,
@@ -2604,70 +2605,13 @@ async function recoverGatewayRuntime() {
 // ── Step 3: Sandbox ──────────────────────────────────────────────
 
 async function promptValidatedSandboxName() {
-  const MAX_ATTEMPTS = 3;
-  for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
-    const nameAnswer = await promptOrDefault(
-      "  Sandbox name (lowercase, starts with letter, hyphens ok) [my-assistant]: ",
-      "NEMOCLAW_SANDBOX_NAME",
-      "my-assistant",
-    );
-    const sandboxName = (nameAnswer || "my-assistant").trim();
-
-    try {
-      const validatedSandboxName = validateName(sandboxName, "sandbox name");
-      // Reject names that collide with global CLI commands.
-      // A sandbox named 'status' makes 'nemoclaw status connect' route to
-      // the global status command instead of the sandbox.
-      const RESERVED_NAMES = new Set([
-        "onboard",
-        "list",
-        "deploy",
-        "setup",
-        "setup-spark",
-        "start",
-        "stop",
-        "status",
-        "debug",
-        "uninstall",
-        "credentials",
-        "help",
-      ]);
-      if (RESERVED_NAMES.has(sandboxName)) {
-        console.error(`  Reserved name: '${sandboxName}' is a NemoClaw CLI command.`);
-        console.error("  Choose a different name to avoid routing conflicts.");
-        if (isNonInteractive()) {
-          process.exit(1);
-        }
-        if (attempt < MAX_ATTEMPTS - 1) {
-          console.error("  Please try again.\n");
-        }
-        continue;
-      }
-      return validatedSandboxName;
-    } catch (error) {
-      console.error(`  ${error.message}`);
-    }
-
-    if (/^[0-9]/.test(sandboxName)) {
-      console.error("  Names must start with a letter, not a digit.");
-    } else {
-      console.error("  Names must be lowercase, contain only letters, numbers, and hyphens,");
-      console.error("  must start with a letter, and end with a letter or number.");
-    }
-
-    // Non-interactive runs cannot re-prompt — abort so the caller can fix the
-    // NEMOCLAW_SANDBOX_NAME env var and retry.
-    if (isNonInteractive()) {
-      process.exit(1);
-    }
-
-    if (attempt < MAX_ATTEMPTS - 1) {
-      console.error("  Please try again.\n");
-    }
-  }
-
-  console.error("  Too many invalid attempts.");
-  process.exit(1);
+  return promptValidatedSandboxNameWithDeps({
+    promptOrDefault,
+    validateName,
+    isNonInteractive,
+    errorWriter: console.error,
+    exit: (code) => process.exit(code),
+  });
 }
 
 // ── Step 5: Sandbox ──────────────────────────────────────────────
