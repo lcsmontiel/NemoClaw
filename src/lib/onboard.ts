@@ -64,14 +64,10 @@ const nim = require("./nim");
 const onboardSession = require("./onboard-session");
 const { ONBOARD_STEP_META, isOnboardStepName, toVisibleStepName } = require("./onboard-fsm");
 const { initializeOnboardRun } = require("./onboard-bootstrap");
-const { runHostPreparationFlow } = require("./onboard-host-flow");
-const { runInferenceSelectionLoop } = require("./onboard-inference-loop");
+const { createOnboardingOrchestratorDeps } = require("./onboard-orchestrator-deps");
 const { runOnboardingOrchestrator } = require("./onboard-orchestrator");
-const { runPolicySetupFlow } = require("./onboard-policy-flow");
 const { createOnboardRunContext } = require("./onboard-run-context");
 const { collectResumeConfigConflicts, detectResumeSandboxConflict } = require("./onboard-resume");
-const { runRuntimeSetupFlow } = require("./onboard-runtime-flow");
-const { runSandboxProvisioningFlow } = require("./onboard-sandbox-flow");
 const policies = require("./policies");
 const tiers = require("./tiers");
 const { ensureUsageNoticeConsent } = require("./usage-notice");
@@ -5838,61 +5834,38 @@ async function onboard(opts = {}) {
     if (resume) note("  (resume mode)");
     console.log("  ===================");
 
-    const orchestrationResult = await runOnboardingOrchestrator(runContext, {
-      resume,
-      dangerouslySkipPermissions,
-      requestedAgent: opts.agent || null,
-      resolveAgent: agentOnboard.resolveAgent,
-      note,
-      log: console.log,
-      skippedStepMessage,
-      showPolicyHeader: () => {
-        step(8, 8, "Policy presets");
-      },
-      host: {
-        run: runHostPreparationFlow,
+    const orchestrationResult = await runOnboardingOrchestrator(
+      runContext,
+      createOnboardingOrchestratorDeps(runContext, {
+        resume,
+        dangerouslySkipPermissions,
+        requestedAgent: opts.agent || null,
+        gatewayName: GATEWAY_NAME,
+        dashboardPort: DASHBOARD_PORT,
+        resolveAgent: agentOnboard.resolveAgent,
+        note,
+        log: console.log,
+        skippedStepMessage,
+        step,
         preflight,
         detectGpu: () => nim.detectGpu(),
-        getGatewayStatus: () => runCaptureOpenshell(["status"], { ignoreError: true }),
-        getNamedGatewayInfo: () =>
-          runCaptureOpenshell(["gateway", "info", "-g", GATEWAY_NAME], { ignoreError: true }),
-        getActiveGatewayInfo: () =>
-          runCaptureOpenshell(["gateway", "info"], { ignoreError: true }),
+        runCaptureOpenshell,
         getGatewayReuseState,
         verifyGatewayContainerRunning,
-        stopDashboardForward: () => {
-          runOpenshell(["forward", "stop", String(DASHBOARD_PORT)], { ignoreError: true });
-        },
+        runOpenshell,
         destroyGateway,
         clearRegistryAll: () => {
           registry.clearAll();
         },
         startGateway,
-      },
-      inference: {
-        run: runInferenceSelectionLoop,
-        gpu: null,
         setupNim,
         setupInference,
         isInferenceRouteReady,
         hydrateCredentialEnv,
         getOpenshellBinary,
-        setOpenshellBinary: (binary) => {
-          process.env.NEMOCLAW_OPENSHELL_BIN = binary;
+        updateSandbox: (name, patch) => {
+          registry.updateSandbox(name, patch);
         },
-        clearSensitiveEnv: () => {
-          delete process.env.NVIDIA_API_KEY;
-        },
-        updateSandboxNimContainer: (nextSandboxName, nextNimContainer) => {
-          registry.updateSandbox(nextSandboxName, { nimContainer: nextNimContainer });
-        },
-      },
-      sandbox: {
-        run: runSandboxProvisioningFlow,
-        sessionMessagingChannels: null,
-        sessionWebSearchConfig: null,
-        hasCompletedMessaging: false,
-        hasCompletedSandbox: false,
         setupMessagingChannels,
         configureWebSearch,
         ensureValidatedBraveSearchCredential,
@@ -5902,56 +5875,21 @@ async function onboard(opts = {}) {
         },
         repairRecordedSandbox,
         createSandbox,
-        persistRegistryModelProvider: (name, patch) => {
-          // Persist model and provider after the sandbox entry exists in the registry.
-          // updateSandbox() silently no-ops when the entry is missing, so this must
-          // run after createSandbox() / registerSandbox() — not before. Fixes #1881.
-          registry.updateSandbox(name, patch);
-        },
-      },
-      runtime: {
-        run: runRuntimeSetupFlow,
-        hasCompletedRuntimeSetup: false,
-        handleAgentSetup: async (
-          nextSandboxName,
-          nextModel,
-          nextProvider,
-          nextAgent,
-          nextResume,
-          nextSession,
-        ) => {
-          await agentOnboard.handleAgentSetup(
-            nextSandboxName,
-            nextModel,
-            nextProvider,
-            nextAgent,
-            nextResume,
-            nextSession,
-            {
-              step,
-              runCaptureOpenshell,
-              openshellShellCommand,
-              buildSandboxConfigSyncScript,
-              writeSandboxConfigSyncFile,
-              cleanupTempDir,
-              startRecordedStep: runContext.startStep,
-              skippedStepMessage,
-            },
-          );
-        },
+        handleAgentSetup: agentOnboard.handleAgentSetup,
+        openshellShellCommand,
+        buildSandboxConfigSyncScript,
+        writeSandboxConfigSyncFile,
+        cleanupTempDir,
         isOpenclawReady,
         setupOpenclaw,
-      },
-      policy: {
-        run: runPolicySetupFlow,
         waitForSandboxReady,
         applyPermissivePolicy: (name) => {
           policies.applyPermissivePolicy(name);
         },
         arePolicyPresetsApplied,
         setupPoliciesWithSelection,
-      },
-    });
+      }),
+    );
     if (orchestrationResult.policyResult.kind === "sandbox_not_ready") {
       console.error(`\n${orchestrationResult.policyResult.message}`);
       process.exit(1);

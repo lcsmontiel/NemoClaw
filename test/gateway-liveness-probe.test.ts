@@ -17,6 +17,10 @@ const ROOT = path.resolve(import.meta.dirname, "..");
 
 describe("gateway liveness probe (#2020)", () => {
   const content = fs.readFileSync(path.join(ROOT, "src/lib/onboard.ts"), "utf-8");
+  const depsContent = fs.readFileSync(
+    path.join(ROOT, "src/lib/onboard-orchestrator-deps.ts"),
+    "utf-8",
+  );
   const helperContent = fs.readFileSync(
     path.join(ROOT, "src/lib/onboard-host-flow.ts"),
     "utf-8",
@@ -40,7 +44,7 @@ describe("gateway liveness probe (#2020)", () => {
   });
 
   it("main onboard flow delegates the probe to the extracted host preparation helper", () => {
-    expect(content).toContain("run: runHostPreparationFlow");
+    expect(depsContent).toContain("run: runHostPreparationFlow");
     const mainFlowProbe = helperContent.match(
       /let gatewayReuseState = deps\.getGatewayReuseState[\s\S]*?deps\.verifyGatewayContainerRunning\(\)[\s\S]*?const canReuseHealthyGateway/,
     );

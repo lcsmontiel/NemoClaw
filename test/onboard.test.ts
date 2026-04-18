@@ -2105,8 +2105,8 @@ const { setupInference } = require(${onboardPath});
   });
 
   it("marks the unused agent_setup/openclaw sibling step as skipped (#1834)", () => {
-    const onboardSource = fs.readFileSync(
-      path.join(import.meta.dirname, "..", "src", "lib", "onboard.ts"),
+    const depsSource = fs.readFileSync(
+      path.join(import.meta.dirname, "..", "src", "lib", "onboard-orchestrator-deps.ts"),
       "utf-8",
     );
     const helperSource = fs.readFileSync(
@@ -2114,7 +2114,7 @@ const { setupInference } = require(${onboardPath});
       "utf-8",
     );
 
-    assert.match(onboardSource, /run: runRuntimeSetupFlow/);
+    assert.match(depsSource, /run: runRuntimeSetupFlow/);
     // When agent path is taken, openclaw must be marked skipped.
     assert.match(helperSource, /handleAgentSetup\(/);
     assert.match(helperSource, /onSkipSiblingStep\("openclaw"\)/);
@@ -2124,8 +2124,8 @@ const { setupInference } = require(${onboardPath});
   });
 
   it("delegates messaging+sandbox provisioning to the extracted sandbox flow helper", () => {
-    const onboardSource = fs.readFileSync(
-      path.join(import.meta.dirname, "..", "src", "lib", "onboard.ts"),
+    const depsSource = fs.readFileSync(
+      path.join(import.meta.dirname, "..", "src", "lib", "onboard-orchestrator-deps.ts"),
       "utf-8",
     );
     const helperSource = fs.readFileSync(
@@ -2133,7 +2133,7 @@ const { setupInference } = require(${onboardPath});
       "utf-8",
     );
 
-    assert.match(onboardSource, /run: runSandboxProvisioningFlow/);
+    assert.match(depsSource, /run: runSandboxProvisioningFlow/);
     assert.match(helperSource, /onStartStep\("messaging"/);
     assert.match(helperSource, /onCompleteStep\("messaging"/);
     assert.match(helperSource, /onStartStep\("sandbox"/);
@@ -2176,8 +2176,8 @@ const { setupInference } = require(${onboardPath});
   });
 
   it("activates permissive policy via policy set when dangerouslySkipPermissions is true", () => {
-    const onboardSource = fs.readFileSync(
-      path.join(import.meta.dirname, "..", "src", "lib", "onboard.ts"),
+    const depsSource = fs.readFileSync(
+      path.join(import.meta.dirname, "..", "src", "lib", "onboard-orchestrator-deps.ts"),
       "utf-8",
     );
     const helperSource = fs.readFileSync(
@@ -2188,7 +2188,7 @@ const { setupInference } = require(${onboardPath});
     // The dangerouslySkipPermissions branch must call applyPermissivePolicy to
     // activate the policy via `openshell policy set --wait`.  Without this,
     // the base policy from sandbox create stays in Pending status (#897).
-    assert.match(onboardSource, /run: runPolicySetupFlow/);
+    assert.match(depsSource, /run: runPolicySetupFlow/);
     assert.match(
       helperSource,
       /if \(deps\.dangerouslySkipPermissions\) \{\s*deps\.onShowHeader\(\);\s*if \(!deps\.waitForSandboxReady\(state\.sandboxName\)\) \{[\s\S]*?\}\s*deps\.applyPermissivePolicy\(state\.sandboxName\);/,
@@ -5249,8 +5249,8 @@ const { createSandbox } = require(${onboardPath});
       path.join(import.meta.dirname, "..", "src", "lib", "onboard-sandbox-flow.ts"),
       "utf-8",
     );
-    const onboardSource = fs.readFileSync(
-      path.join(import.meta.dirname, "..", "src", "lib", "onboard.ts"),
+    const depsSource = fs.readFileSync(
+      path.join(import.meta.dirname, "..", "src", "lib", "onboard-orchestrator-deps.ts"),
       "utf-8",
     );
     const createSandboxPos = helperSource.indexOf("const nextSandboxName = await deps.createSandbox(");
@@ -5264,8 +5264,8 @@ const { createSandbox } = require(${onboardPath});
       "persistRegistryModelProvider must appear AFTER createSandbox() — regression #1881",
     );
     assert.match(
-      onboardSource,
-      /persistRegistryModelProvider: \(name, patch\) => \{[\s\S]*?registry\.updateSandbox\(name, patch\);[\s\S]*?\}/,
+      depsSource,
+      /persistRegistryModelProvider: \(name, patch\) => \{[\s\S]*?input\.updateSandbox\(name, patch\);[\s\S]*?\}/,
     );
   });
 

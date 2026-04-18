@@ -562,7 +562,10 @@ describe("regression guards", () => {
 
     it("onboard clears NVIDIA_API_KEY from process.env after setupInference", () => {
       const fs = require("fs");
-      const src = fs.readFileSync(path.join(import.meta.dirname, "..", "src", "lib", "onboard.ts"), "utf-8");
+      const src = fs.readFileSync(
+        path.join(import.meta.dirname, "..", "src", "lib", "onboard-orchestrator-deps.ts"),
+        "utf-8",
+      );
       expect(src.includes("delete process.env.NVIDIA_API_KEY")).toBeTruthy();
     });
 

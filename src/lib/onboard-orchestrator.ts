@@ -60,6 +60,7 @@ export interface OnboardOrchestratorDeps<
   };
   inference: Omit<
     InferenceLoopDeps<TGpu>,
+    | "gpu"
     | "resume"
     | "hasCompletedProviderSelection"
     | "hasCompletedInference"
@@ -251,6 +252,7 @@ export async function runOnboardingOrchestrator<
     },
     {
       ...deps.inference,
+      gpu,
       resume: deps.resume,
       hasCompletedProviderSelection: hasCompleted("provider_selection"),
       hasCompletedInference: hasCompleted("inference"),
