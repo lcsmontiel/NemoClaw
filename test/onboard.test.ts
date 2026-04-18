@@ -2116,7 +2116,7 @@ const { setupInference } = require(${onboardPath});
     assert.match(source, /setupOpenclaw[\s\S]*?markStepSkipped\("agent_setup"\)/);
   });
 
-  it("starts the sandbox step before prompting for the sandbox name", () => {
+  it("records messaging before sandbox creation and persists selected channels", () => {
     const source = fs.readFileSync(
       path.join(import.meta.dirname, "..", "src", "lib", "onboard.ts"),
       "utf-8",
@@ -2124,7 +2124,11 @@ const { setupInference } = require(${onboardPath});
 
     assert.match(
       source,
-      /startRecordedStep\("sandbox", \{ sandboxName, provider, model \}\);\s*selectedMessagingChannels = await setupMessagingChannels\(\);\s*onboardSession\.updateSession\(\(current\) => \{\s*current\.messagingChannels = selectedMessagingChannels;\s*return current;\s*\}\);\s*sandboxName = await createSandbox\(\s*gpu,\s*model,\s*provider,\s*preferredInferenceApi,\s*sandboxName,\s*nextWebSearchConfig,\s*selectedMessagingChannels,\s*fromDockerfile,\s*agent,\s*dangerouslySkipPermissions,\s*\);/,
+      /startRecordedStep\("messaging", \{ sandboxName, provider, model \}\);\s*selectedMessagingChannels = await setupMessagingChannels\(\);\s*onboardSession\.markStepComplete\("messaging", \{\s*sandboxName,\s*provider,\s*model,\s*messagingChannels: selectedMessagingChannels,\s*\}\);\s*}\s*startRecordedStep\("sandbox", \{ sandboxName, provider, model \}\);\s*sandboxName = await createSandbox\(/,
+    );
+    assert.match(
+      source,
+      /const resumeMessaging =\s*resume &&\s*Array\.isArray\(session\?\.messagingChannels\)/,
     );
   });
 

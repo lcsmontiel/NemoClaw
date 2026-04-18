@@ -6024,6 +6024,9 @@ async function onboard(opts = {}) {
     let preferredInferenceApi = session?.preferredInferenceApi || null;
     let nimContainer = session?.nimContainer || null;
     let webSearchConfig = session?.webSearchConfig || null;
+    selectedMessagingChannels = Array.isArray(session?.messagingChannels)
+      ? [...session.messagingChannels]
+      : [];
     let forceProviderSelection = false;
     while (true) {
       const resumeProviderSelection =
@@ -6138,12 +6141,26 @@ async function onboard(opts = {}) {
       } else {
         nextWebSearchConfig = await configureWebSearch(null);
       }
+      const resumeMessaging =
+        resume &&
+        Array.isArray(session?.messagingChannels) &&
+        (session?.steps?.messaging?.status === "complete" ||
+          session?.steps?.sandbox?.status === "in_progress" ||
+          session?.steps?.sandbox?.status === "failed");
+      if (resumeMessaging) {
+        selectedMessagingChannels = [...session.messagingChannels];
+        skippedStepMessage("messaging", selectedMessagingChannels.join(", "));
+      } else {
+        startRecordedStep("messaging", { sandboxName, provider, model });
+        selectedMessagingChannels = await setupMessagingChannels();
+        onboardSession.markStepComplete("messaging", {
+          sandboxName,
+          provider,
+          model,
+          messagingChannels: selectedMessagingChannels,
+        });
+      }
       startRecordedStep("sandbox", { sandboxName, provider, model });
-      selectedMessagingChannels = await setupMessagingChannels();
-      onboardSession.updateSession((current) => {
-        current.messagingChannels = selectedMessagingChannels;
-        return current;
-      });
       sandboxName = await createSandbox(
         gpu,
         model,
