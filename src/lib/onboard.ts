@@ -98,6 +98,11 @@ const {
   getResumeSandboxConflict: detectRequestedResumeSandboxConflict,
 } = require("./onboard-requests");
 const {
+  installOpenshell: installOpenshellWithDeps,
+  isOpenshellInstalled: detectInstalledOpenshell,
+  waitForSandboxReady: waitForSandboxReadyWithDeps,
+} = require("./onboard-openshell");
+const {
   getContainerRuntime: resolveContainerRuntime,
   getFutureShellPathHint: resolveFutureShellPathHint,
   getPortConflictServiceHints: resolvePortConflictServiceHints,
@@ -2093,7 +2098,7 @@ function printRemediationActions(actions) {
 }
 
 function isOpenshellInstalled() {
-  return resolveOpenshell() !== null;
+  return detectInstalledOpenshell(resolveOpenshell);
 }
 
 function getFutureShellPathHint(binDir, pathValue = process.env.PATH || "") {
@@ -2105,33 +2110,24 @@ function getPortConflictServiceHints(platform = process.platform) {
 }
 
 function installOpenshell() {
-  const result = spawnSync("bash", [path.join(SCRIPTS, "install-openshell.sh")], {
-    cwd: ROOT,
+  const result = installOpenshellWithDeps({
+    scriptPath: path.join(SCRIPTS, "install-openshell.sh"),
+    rootDir: ROOT,
     env: process.env,
-    stdio: ["ignore", "pipe", "pipe"],
-    encoding: "utf-8",
-    timeout: 300_000,
+    spawnSync,
+    existsSync: fs.existsSync,
+    resolveOpenshell,
+    getFutureShellPathHint,
+    errorWriter: console.error,
   });
-  if (result.status !== 0) {
-    const output = `${result.stdout || ""}${result.stderr || ""}`.trim();
-    if (output) {
-      console.error(output);
-    }
-    return { installed: false, localBin: null, futureShellPathHint: null };
+  if (result.updatedPathValue) {
+    process.env.PATH = result.updatedPathValue;
   }
-  const localBin = process.env.XDG_BIN_HOME || path.join(process.env.HOME || "", ".local", "bin");
-  const openshellPath = path.join(localBin, "openshell");
-  const futureShellPathHint = fs.existsSync(openshellPath)
-    ? getFutureShellPathHint(localBin, process.env.PATH)
-    : null;
-  if (fs.existsSync(openshellPath) && futureShellPathHint) {
-    process.env.PATH = `${localBin}${path.delimiter}${process.env.PATH}`;
-  }
-  OPENSHELL_BIN = resolveOpenshell();
+  OPENSHELL_BIN = result.openshellBinary;
   return {
-    installed: OPENSHELL_BIN !== null,
-    localBin,
-    futureShellPathHint,
+    installed: result.installed,
+    localBin: result.localBin,
+    futureShellPathHint: result.futureShellPathHint,
   };
 }
 
@@ -2165,27 +2161,15 @@ async function ensureNamedCredential(envName, label, helpUrl = null) {
 }
 
 function waitForSandboxReady(sandboxName, attempts = 10, delaySeconds = 2) {
-  for (let i = 0; i < attempts; i += 1) {
-    const podPhase = runCaptureOpenshell(
-      [
-        "doctor",
-        "exec",
-        "--",
-        "kubectl",
-        "-n",
-        "openshell",
-        "get",
-        "pod",
-        sandboxName,
-        "-o",
-        "jsonpath={.status.phase}",
-      ],
-      { ignoreError: true },
-    );
-    if (podPhase === "Running") return true;
-    sleep(delaySeconds);
-  }
-  return false;
+  return waitForSandboxReadyWithDeps(
+    sandboxName,
+    {
+      runCaptureOpenshell,
+      sleep,
+    },
+    attempts,
+    delaySeconds,
+  );
 }
 
 // parsePolicyPresetEnv — see urlUtils import above
