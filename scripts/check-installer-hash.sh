@@ -18,11 +18,11 @@ set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 
 case "${1:-}" in
-  "" | --update) ;;
-  *)
-    echo "Usage: scripts/check-installer-hash.sh [--update]" >&2
-    exit 2
-    ;;
+"" | --update) ;;
+*)
+  echo "Usage: scripts/check-installer-hash.sh [--update]" >&2
+  exit 2
+  ;;
 esac
 
 # ---------------------------------------------------------------------------
@@ -60,7 +60,12 @@ FILES=()
 VARS=()
 URLS=()
 
-register() { LABELS+=("$1"); FILES+=("$2"); VARS+=("$3"); URLS+=("$4"); }
+register() {
+  LABELS+=("$1")
+  FILES+=("$2")
+  VARS+=("$3")
+  URLS+=("$4")
+}
 
 register "NemoClaw k8s installer" \
   "${REPO_ROOT}/k8s/nemoclaw-k8s.yaml" \
