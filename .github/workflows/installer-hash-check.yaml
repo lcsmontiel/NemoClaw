@@ -1,15 +1,19 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
-# Weekly check that the pinned NemoClaw installer SHA-256 in k8s/nemoclaw-k8s.yaml
+# Verifies the pinned NemoClaw installer SHA-256 in k8s/nemoclaw-k8s.yaml
 # still matches the upstream script at https://www.nvidia.com/nemoclaw.sh.
-# Fails with an actionable message when the upstream script has changed.
+# Runs on every PR and push to main, plus a weekly scheduled check.
 
 name: installer-hash-check
 
 on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+  push:
+    branches: [main]
   schedule:
-    # Every Monday at 09:30 UTC (offset from docker-pin-check at 09:00)
+    # Weekly fallback in case upstream changes between PRs
     - cron: "30 9 * * 1"
   workflow_dispatch:
 
