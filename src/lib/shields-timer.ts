@@ -100,7 +100,8 @@ setTimeout(() => {
       process.exit(1);
     }
 
-    // Re-lock config file (each operation independent)
+    // Re-lock config file (each operation independent).
+    // See lockAgentConfig in shields.ts for the full rationale on chattr.
     let lockVerified = true;
     if (configPath) {
       const lockErrors = [];
@@ -110,11 +111,11 @@ setTimeout(() => {
         try { kubectlExec(["chmod", "755", configDir]); } catch { lockErrors.push("chmod dir"); }
         try { kubectlExec(["chown", "root:root", configDir]); } catch { lockErrors.push("chown dir"); }
       }
-      let chattrSupported = true;
-      try { kubectlExec(["chattr", "+i", configPath]); } catch { chattrSupported = false; lockErrors.push("chattr +i"); }
+      // Best-effort: config file was never chattr +i'd by entrypoint
+      let chattrSucceeded = true;
+      try { kubectlExec(["chattr", "+i", configPath]); } catch { chattrSucceeded = false; }
 
-      // Verify the lock took effect.
-      // Mode + ownership are mandatory; immutable bit only checked if chattr succeeded.
+      // Verify mode + ownership (mandatory). Immutable bit only if chattr worked.
       const issues = [];
       try {
         const perms = execFileSync("docker", [
@@ -129,7 +130,7 @@ setTimeout(() => {
         issues.push("file stat failed");
       }
 
-      if (chattrSupported) {
+      if (chattrSucceeded) {
         try {
           const attrs = execFileSync("docker", [
             "exec", K3S_CONTAINER,

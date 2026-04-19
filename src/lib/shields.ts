@@ -138,6 +138,13 @@ function killTimer(sandboxName: string): void {
 //
 // Sets permissions to sandbox:sandbox 0600/0700, matching what OpenClaw
 // writes natively (mode 384 = 0o600). This keeps `openclaw doctor` happy.
+//
+// Note on chattr: The entrypoint (nemoclaw-start.sh) sets chattr +i on the
+// .openclaw DIRECTORY and its SYMLINKS, but NOT on openclaw.json itself.
+// The chattr -i here is best-effort — it may silently fail if kubectl exec
+// lacks CAP_LINUX_IMMUTABLE or if the file was never immutable. That's fine:
+// the file becomes writable through the permissive policy (disables Landlock
+// read_only) + chown/chmod below.
 // ---------------------------------------------------------------------------
 
 function unlockAgentConfig(sandboxName: string, target: { configPath: string; configDir: string }): void {
@@ -158,6 +165,18 @@ function unlockAgentConfig(sandboxName: string, target: { configPath: string; co
 // Each operation runs independently so a single failure does not skip the
 // rest. After all attempts, we verify the actual on-disk state and throw
 // if the config is not properly locked.
+//
+// The config file's protection comes from three layers:
+//   1. Landlock read_only path — kernel-level, restored by policy snapshot
+//   2. UNIX permissions — 444 root:root (mandatory, verified here)
+//   3. chattr +i immutable bit — defense-in-depth (best-effort)
+//
+// Layer 3 is best-effort because the entrypoint (nemoclaw-start.sh) only
+// sets chattr +i on the .openclaw directory and its symlinks, not on
+// openclaw.json itself. kubectl exec may also lack CAP_LINUX_IMMUTABLE.
+// The file was never immutable via chattr, so failing to set it is not a
+// regression — layers 1+2 are sufficient. We still attempt it in case the
+// runtime environment supports it.
 // ---------------------------------------------------------------------------
 
 function lockAgentConfig(sandboxName: string, target: { configPath: string; configDir: string }): void {
@@ -175,13 +194,14 @@ function lockAgentConfig(sandboxName: string, target: { configPath: string; conf
   try { kubectlExec(sandboxName, ["chown", "root:root", target.configDir]); }
   catch { errors.push("chown root:root config dir"); }
 
-  // chattr +i is defense-in-depth — some filesystems don't support it.
-  // Track whether it succeeded so verification knows what to expect.
-  let chattrSupported = true;
+  // Best-effort: the config file was never chattr +i'd by the entrypoint
+  // (only the directory and symlinks were). kubectl exec may also lack
+  // CAP_LINUX_IMMUTABLE. Track the result so verification doesn't require
+  // something that was never there.
+  let chattrSucceeded = true;
   try { kubectlExec(sandboxName, ["chattr", "+i", target.configPath]); }
   catch {
-    chattrSupported = false;
-    errors.push("chattr +i config file");
+    chattrSucceeded = false;
   }
 
   if (errors.length > 0) {
@@ -189,8 +209,8 @@ function lockAgentConfig(sandboxName: string, target: { configPath: string; conf
   }
 
   // Verify the lock actually took effect.
-  // Mode + ownership are mandatory; immutable bit is only checked if
-  // chattr succeeded (filesystem may not support it).
+  // Mode + ownership are mandatory (layers 1+2 depend on them).
+  // Immutable bit is only verified if chattr succeeded above.
   const issues: string[] = [];
   try {
     const perms = kubectlExecCapture(sandboxName, ["stat", "-c", "%a %U:%G", target.configPath]);
@@ -212,7 +232,7 @@ function lockAgentConfig(sandboxName: string, target: { configPath: string; conf
     issues.push(`dir stat failed: ${msg}`);
   }
 
-  if (chattrSupported) {
+  if (chattrSucceeded) {
     try {
       const attrs = kubectlExecCapture(sandboxName, ["lsattr", "-d", target.configPath]);
       const [flags] = attrs.trim().split(/\s+/, 1);
@@ -220,8 +240,6 @@ function lockAgentConfig(sandboxName: string, target: { configPath: string; conf
     } catch {
       // lsattr may not be available on all images — skip
     }
-  } else {
-    console.error("  Note: Immutable bit (chattr +i) not supported — relying on mode + ownership.");
   }
 
   if (issues.length > 0) {
