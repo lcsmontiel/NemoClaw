@@ -5,7 +5,6 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
-import { createRequire } from "node:module";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
@@ -15,6 +14,7 @@ import {
   buildSandboxConfigSyncScript,
   classifySandboxCreateFailure,
   compactText,
+  computeSetupPresetSuggestions,
   formatEnvAssignment,
   getDashboardAccessInfo,
   getDashboardForwardStartCommand,
@@ -34,6 +34,7 @@ import {
   getResumeSandboxConflict,
   getSandboxStateFromOutputs,
   getStableGatewayImageRef,
+  getSuggestedPolicyPresets,
   isGatewayHealthy,
   classifyValidationFailure,
   hasResponsesToolCall,
@@ -52,9 +53,6 @@ import {
 } from "../dist/lib/onboard";
 import { stageOptimizedSandboxBuildContext } from "../dist/lib/sandbox-build-context";
 import { buildWebSearchDockerConfig } from "../dist/lib/web-search";
-
-const require = createRequire(import.meta.url);
-const { getSuggestedPolicyPresets, computeSetupPresetSuggestions } = require("../dist/lib/onboard.js");
 
 describe("onboard helpers", () => {
   it("classifies sandbox create timeout failures and tracks upload progress", () => {
