@@ -45,6 +45,10 @@ const {
 } = require("./inference-config");
 
 const {
+  ANTHROPIC_ENDPOINT_URL,
+  REMOTE_PROVIDER_CONFIG,
+} = require("./onboard-remote-provider-config");
+const {
   getSuggestedPolicyPresets: getSuggestedPolicyPresetsWithDeps,
   LOCAL_INFERENCE_PROVIDERS,
 } = require("./onboard-policy-suggestions");
@@ -125,6 +129,12 @@ const {
   persistProxyToken: persistProxyTokenWithDeps,
   startOllamaAuthProxy: startOllamaAuthProxyWithDeps,
 } = require("./onboard-ollama-proxy");
+const {
+  buildSandboxConfigSyncScript: buildSandboxConfigSyncScriptWithDeps,
+  isOpenclawReady: isOpenclawReadyWithDeps,
+  setupOpenclaw: setupOpenclawWithDeps,
+  writeSandboxConfigSyncFile: writeSandboxConfigSyncFileWithDeps,
+} = require("./onboard-openclaw-setup");
 const {
   prepareOllamaModel: prepareOllamaModelWithDeps,
   printOllamaExposureWarning: printOllamaExposureWarningWithDeps,
@@ -251,78 +261,7 @@ function verifyGatewayContainerRunning() {
 }
 const OPENCLAW_LAUNCH_AGENT_PLIST = "~/Library/LaunchAgents/ai.openclaw.gateway.plist";
 
-const BUILD_ENDPOINT_URL = "https://integrate.api.nvidia.com/v1";
-const OPENAI_ENDPOINT_URL = "https://api.openai.com/v1";
-const ANTHROPIC_ENDPOINT_URL = "https://api.anthropic.com";
-const GEMINI_ENDPOINT_URL = "https://generativelanguage.googleapis.com/v1beta/openai/";
 const BRAVE_SEARCH_HELP_URL = "https://brave.com/search/api/";
-
-const REMOTE_PROVIDER_CONFIG = {
-  build: {
-    label: "NVIDIA Endpoints",
-    providerName: "nvidia-prod",
-    providerType: "nvidia",
-    credentialEnv: "NVIDIA_API_KEY",
-    endpointUrl: BUILD_ENDPOINT_URL,
-    helpUrl: "https://build.nvidia.com/settings/api-keys",
-    modelMode: "catalog",
-    defaultModel: DEFAULT_CLOUD_MODEL,
-    skipVerify: true,
-  },
-  openai: {
-    label: "OpenAI",
-    providerName: "openai-api",
-    providerType: "openai",
-    credentialEnv: "OPENAI_API_KEY",
-    endpointUrl: OPENAI_ENDPOINT_URL,
-    helpUrl: "https://platform.openai.com/api-keys",
-    modelMode: "curated",
-    defaultModel: "gpt-5.4",
-    skipVerify: true,
-  },
-  anthropic: {
-    label: "Anthropic",
-    providerName: "anthropic-prod",
-    providerType: "anthropic",
-    credentialEnv: "ANTHROPIC_API_KEY",
-    endpointUrl: ANTHROPIC_ENDPOINT_URL,
-    helpUrl: "https://console.anthropic.com/settings/keys",
-    modelMode: "curated",
-    defaultModel: "claude-sonnet-4-6",
-  },
-  anthropicCompatible: {
-    label: "Other Anthropic-compatible endpoint",
-    providerName: "compatible-anthropic-endpoint",
-    providerType: "anthropic",
-    credentialEnv: "COMPATIBLE_ANTHROPIC_API_KEY",
-    endpointUrl: "",
-    helpUrl: null,
-    modelMode: "input",
-    defaultModel: "",
-  },
-  gemini: {
-    label: "Google Gemini",
-    providerName: "gemini-api",
-    providerType: "openai",
-    credentialEnv: "GEMINI_API_KEY",
-    endpointUrl: GEMINI_ENDPOINT_URL,
-    helpUrl: "https://aistudio.google.com/app/apikey",
-    modelMode: "curated",
-    defaultModel: "gemini-2.5-flash",
-    skipVerify: true,
-  },
-  custom: {
-    label: "Other OpenAI-compatible endpoint",
-    providerName: "compatible-endpoint",
-    providerType: "openai",
-    credentialEnv: "COMPATIBLE_API_KEY",
-    endpointUrl: "",
-    helpUrl: null,
-    modelMode: "input",
-    defaultModel: "",
-    skipVerify: true,
-  },
-};
 
 const DISCORD_SNOWFLAKE_RE = /^[0-9]{17,19}$/;
 
@@ -616,28 +555,15 @@ function pruneStaleSandboxEntry(sandboxName) {
 }
 
 function buildSandboxConfigSyncScript(selectionConfig) {
-  // openclaw.json is immutable (root:root 444, Landlock read-only) — never
-  // write to it at runtime.  Model routing is handled by the host-side
-  // gateway (`openshell inference set` in Step 5), not from inside the
-  // sandbox.  We only write the NemoClaw selection config (~/.nemoclaw/).
-  return `
-set -euo pipefail
-mkdir -p ~/.nemoclaw
-cat > ~/.nemoclaw/config.json <<'EOF_NEMOCLAW_CFG'
-${JSON.stringify(selectionConfig, null, 2)}
-EOF_NEMOCLAW_CFG
-exit
-`.trim();
+  return buildSandboxConfigSyncScriptWithDeps(selectionConfig);
 }
 
 function isOpenclawReady(sandboxName) {
-  return Boolean(fetchGatewayAuthTokenFromSandbox(sandboxName));
+  return isOpenclawReadyWithDeps(sandboxName, { fetchGatewayAuthTokenFromSandbox });
 }
 
 function writeSandboxConfigSyncFile(script) {
-  const scriptFile = secureTempFile("nemoclaw-sync", ".sh");
-  fs.writeFileSync(scriptFile, `${script}\n`, { mode: 0o600 });
-  return scriptFile;
+  return writeSandboxConfigSyncFileWithDeps(script, { secureTempFile });
 }
 
 function getWebSearchConfigDeps() {
@@ -1351,27 +1277,18 @@ function getSuggestedPolicyPresets({ enabledChannels = null, webSearchConfig = n
 // ── Step 7: OpenClaw ─────────────────────────────────────────────
 
 async function setupOpenclaw(sandboxName, model, provider) {
-  step(7, 8, "Setting up OpenClaw inside sandbox");
-
-  const selectionConfig = getProviderSelectionConfig(provider, model);
-  if (selectionConfig) {
-    const sandboxConfig = {
-      ...selectionConfig,
-      onboardedAt: new Date().toISOString(),
-    };
-    const script = buildSandboxConfigSyncScript(sandboxConfig);
-    const scriptFile = writeSandboxConfigSyncFile(script);
-    try {
-      run(
-        `${openshellShellCommand(["sandbox", "connect", sandboxName])} < ${shellQuote(scriptFile)}`,
-        { stdio: ["ignore", "ignore", "inherit"] },
-      );
-    } finally {
-      cleanupTempDir(scriptFile, "nemoclaw-sync");
-    }
-  }
-
-  console.log("  ✓ OpenClaw gateway launched inside sandbox");
+  return setupOpenclawWithDeps(sandboxName, model, provider, {
+    step,
+    getProviderSelectionConfig,
+    writeSandboxConfigSyncFile,
+    openshellShellCommand,
+    shellQuote,
+    run,
+    cleanupTempDir,
+    fetchGatewayAuthTokenFromSandbox,
+    log: console.log,
+    secureTempFile,
+  });
 }
 
 // ── Step 7: Policy presets ───────────────────────────────────────
