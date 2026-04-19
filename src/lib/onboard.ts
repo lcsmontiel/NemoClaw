@@ -48,10 +48,7 @@ const {
   ANTHROPIC_ENDPOINT_URL,
   REMOTE_PROVIDER_CONFIG,
 } = require("./onboard-remote-provider-config");
-const {
-  getSuggestedPolicyPresets: getSuggestedPolicyPresetsWithDeps,
-  LOCAL_INFERENCE_PROVIDERS,
-} = require("./onboard-policy-suggestions");
+const { LOCAL_INFERENCE_PROVIDERS } = require("./onboard-policy-suggestions");
 const { inferContainerRuntime, isWsl, shouldPatchCoredns } = require("./platform");
 const { resolveOpenshell } = require("./resolve-openshell");
 const {
@@ -89,13 +86,7 @@ const {
   getStableGatewayImageRef: getStableGatewayImageRefWithDeps,
   versionGte: versionGteWithDeps,
 } = require("./onboard-openshell-version");
-const {
-  getGatewayStartEnv: buildGatewayStartEnv,
-  recoverGatewayRuntime: recoverGatewayRuntimeWithDeps,
-  startGatewayWithOptions: startGatewayWithOptionsWithDeps,
-} = require("./onboard-gateway-runtime");
-const { runSetupNim: setupNimWithDeps } = require("./onboard-nim-setup");
-const { runOnboardPreflight } = require("./onboard-preflight-run");
+const { createHostGatewayApi, createInferenceRuntimeApi } = require("./onboard-step-api");
 const {
   getProbeAuthMode: getProbeAuthModeWithDeps,
   getValidationProbeCurlArgs: getValidationProbeCurlArgsWithDeps,
@@ -141,7 +132,6 @@ const {
   promptOllamaModel: promptOllamaModelWithDeps,
 } = require("./onboard-ollama-models");
 const { runCreateSandbox } = require("./onboard-sandbox-create");
-const { runSetupInference } = require("./onboard-inference-provider");
 const {
   configureWebSearch: configureWebSearchWithDeps,
   ensureValidatedBraveSearchCredential: ensureValidatedBraveSearchCredentialWithDeps,
@@ -154,7 +144,7 @@ const {
   setupPoliciesLegacy: setupPoliciesLegacyWithDeps,
   setupPoliciesWithSelection: setupPoliciesWithSelectionWithDeps,
 } = require("./onboard-policy-ui");
-const { MESSAGING_CHANNELS, setupMessagingChannels: setupMessagingChannelsWithDeps } = require("./onboard-messaging");
+const { MESSAGING_CHANNELS } = require("./onboard-messaging");
 const { promptValidatedSandboxName: promptValidatedSandboxNameWithDeps } = require("./onboard-sandbox-name");
 const {
   buildAuthenticatedDashboardUrl,
@@ -792,94 +782,66 @@ function prepareOllamaModel(model, installedModels = []) {
 
 // ── Step 1: Preflight ────────────────────────────────────────────
 
-// eslint-disable-next-line complexity
-async function preflight() {
-  return runOnboardPreflight({
-    step,
-    assessHost,
-    planHostRemediation,
-    printRemediationActions,
-    isOpenshellInstalled,
-    installOpenshell,
-    getInstalledOpenshellVersion,
-    runCaptureOpenshell,
-    getBlueprintMinOpenshellVersion,
-    getBlueprintMaxOpenshellVersion,
-    versionGte,
-    getGatewayReuseState,
-    verifyGatewayContainerRunning,
-    runOpenshell,
-    destroyGateway,
-    clearRegistryAll: () => {
-      registry.clearAll();
-    },
-    run,
-    runCapture,
-    checkPortAvailable,
-    sleep,
-    getPortConflictServiceHints,
-    getMemoryInfo,
-    ensureSwap,
-    isNonInteractive,
-    prompt,
-    nimDetectGpu: () => nim.detectGpu(),
-    processPlatform: process.platform,
-    gatewayName: GATEWAY_NAME,
-    dashboardPort: DASHBOARD_PORT,
-    gatewayPort: GATEWAY_PORT,
-  });
-}
+const hostGatewayApi = createHostGatewayApi({
+  step,
+  assessHost,
+  planHostRemediation,
+  printRemediationActions,
+  isOpenshellInstalled,
+  installOpenshell,
+  getInstalledOpenshellVersion,
+  runCaptureOpenshell,
+  getBlueprintMinOpenshellVersion,
+  getBlueprintMaxOpenshellVersion,
+  versionGte,
+  getGatewayReuseState,
+  verifyGatewayContainerRunning,
+  runOpenshell,
+  destroyGateway,
+  clearRegistryAll: () => {
+    registry.clearAll();
+  },
+  run,
+  runCapture,
+  checkPortAvailable,
+  sleep,
+  getPortConflictServiceHints,
+  getMemoryInfo,
+  ensureSwap,
+  isNonInteractive,
+  prompt,
+  nimDetectGpu: () => nim.detectGpu(),
+  processPlatform: process.platform,
+  gatewayName: GATEWAY_NAME,
+  dashboardPort: DASHBOARD_PORT,
+  gatewayPort: GATEWAY_PORT,
+  scriptsDir: SCRIPTS,
+  processEnv: process.env,
+  processArch: process.arch,
+  log: (...args) => console.log(...args),
+  error: (...args) => console.error(...args),
+  exit: (code) => process.exit(code),
+  openshellShellCommand,
+  streamGatewayStart,
+  isGatewayHealthy,
+  hasStaleGateway,
+  redact,
+  compactText,
+  envInt,
+  getContainerRuntime,
+  shouldPatchCoredns,
+  pruneKnownHostsEntries,
+  isSelectedGateway,
+});
 
-// ── Step 2: Gateway ──────────────────────────────────────────────
-
-/** Start the OpenShell gateway with retry logic and post-start health polling. */
-async function startGatewayWithOptions(_gpu, { exitOnFailure = true } = {}) {
-  return startGatewayWithOptionsWithDeps(
-    _gpu,
-    {
-      gatewayName: GATEWAY_NAME,
-      gatewayPort: GATEWAY_PORT,
-      scriptsDir: SCRIPTS,
-      processEnv: process.env,
-      processArch: process.arch,
-      showHeader: () => {
-        step(2, 8, "Starting OpenShell gateway");
-      },
-      log: console.log,
-      error: console.error,
-      exit: (code) => process.exit(code),
-      openshellShellCommand: (args) => openshellShellCommand(args),
-      streamGatewayStart,
-      runCaptureOpenshell,
-      runOpenshell,
-      isGatewayHealthy,
-      hasStaleGateway,
-      redact,
-      compactText,
-      envInt,
-      sleep,
-      getInstalledOpenshellVersion: () => getInstalledOpenshellVersion(),
-      getContainerRuntime,
-      shouldPatchCoredns,
-      run,
-      destroyGateway,
-      pruneKnownHostsEntries,
-    },
-    { exitOnFailure },
-  );
-}
-
-async function startGateway(_gpu) {
-  return startGatewayWithOptions(_gpu, { exitOnFailure: true });
-}
-
-async function startGatewayForRecovery(_gpu) {
-  return startGatewayWithOptions(_gpu, { exitOnFailure: false });
-}
-
-function getGatewayStartEnv() {
-  return buildGatewayStartEnv(getInstalledOpenshellVersion());
-}
+const {
+  preflight,
+  startGatewayWithOptions,
+  startGateway,
+  startGatewayForRecovery,
+  getGatewayStartEnv,
+  recoverGatewayRuntime,
+} = hostGatewayApi;
 
 function getFutureShellPathHint(binDir, pathValue = process.env.PATH || "") {
   return resolveFutureShellPathHint(binDir, pathValue);
@@ -887,27 +849,6 @@ function getFutureShellPathHint(binDir, pathValue = process.env.PATH || "") {
 
 function getPortConflictServiceHints(platform = process.platform, launchAgentPlist = OPENCLAW_LAUNCH_AGENT_PLIST) {
   return resolvePortConflictServiceHints(platform, launchAgentPlist);
-}
-
-async function recoverGatewayRuntime() {
-  return recoverGatewayRuntimeWithDeps({
-    gatewayName: GATEWAY_NAME,
-    gatewayPort: GATEWAY_PORT,
-    processEnv: process.env,
-    runCaptureOpenshell,
-    runOpenshell,
-    isSelectedGateway,
-    getGatewayStartEnv,
-    envInt,
-    sleep,
-    redact,
-    compactText,
-    getContainerRuntime,
-    shouldPatchCoredns,
-    run,
-    scriptsDir: SCRIPTS,
-    error: console.error,
-  });
 }
 
 // ── Step 3: Sandbox ──────────────────────────────────────────────
@@ -1130,166 +1071,105 @@ function waitForSandboxReady(sandboxName, attempts = 10, delaySeconds = 2) {
 
 // ── Step 3: Inference selection ──────────────────────────────────
 
-// eslint-disable-next-line complexity
-async function setupNim(gpu) {
-  return setupNimWithDeps(gpu, {
-    step,
-    remoteProviderConfig: REMOTE_PROVIDER_CONFIG,
-    runCapture,
-    ollamaPort: OLLAMA_PORT,
-    vllmPort: VLLM_PORT,
-    ollamaProxyPort: OLLAMA_PROXY_PORT,
-    experimental: EXPERIMENTAL,
-    isNonInteractive,
-    getNonInteractiveProvider,
-    getNonInteractiveModel,
-    note,
-    prompt,
-    getNavigationChoice,
-    exitOnboardFromPrompt,
-    normalizeProviderBaseUrl,
-    validateNvidiaApiKeyValue,
-    ensureApiKey,
-    defaultCloudModel: DEFAULT_CLOUD_MODEL,
-    promptCloudModel,
-    ensureNamedCredential,
-    getProbeAuthMode,
-    validateOpenAiLikeModel,
-    getCredential,
-    validateAnthropicModel,
-    anthropicEndpointUrl: ANTHROPIC_ENDPOINT_URL,
-    promptRemoteModel,
-    promptInputModel,
-    backToSelection: BACK_TO_SELECTION,
-    validateCustomOpenAiLikeSelection,
-    validateCustomAnthropicSelection,
-    validateAnthropicSelectionWithRetryMessage,
-    validateOpenAiLikeSelection,
-    shouldRequireResponsesToolCalling,
-    shouldSkipResponsesProbe,
-    nim,
-    gatewayName: GATEWAY_NAME,
-    getLocalProviderBaseUrl,
-    getLocalProviderValidationBaseUrl,
-    processPlatform: process.platform,
-    validateLocalProvider,
-    isWsl,
-    run,
-    sleep,
-    printOllamaExposureWarning,
-    startOllamaAuthProxy,
-    getOllamaModelOptions,
-    getDefaultOllamaModel,
-    promptOllamaModel,
-    prepareOllamaModel,
-    isSafeModelId,
-  });
-}
+const { TELEGRAM_NETWORK_CURL_CODES } = require("./onboard-telegram");
 
-// ── Step 4: Inference provider ───────────────────────────────────
-
-// eslint-disable-next-line complexity
-async function setupInference(
-  sandboxName,
-  model,
-  provider,
-  endpointUrl = null,
-  credentialEnv = null,
-) {
-  return runSetupInference(sandboxName, model, provider, endpointUrl, credentialEnv, {
-    step,
-    runOpenshell,
-    gatewayName: GATEWAY_NAME,
-    remoteProviderConfig: REMOTE_PROVIDER_CONFIG,
-    hydrateCredentialEnv,
-    upsertProvider,
-    isNonInteractive,
-    promptValidationRecovery,
-    classifyApplyFailure,
-    compactText,
-    redact,
-    validateLocalProvider,
-    getLocalProviderBaseUrl,
-    localInferenceTimeoutSecs: LOCAL_INFERENCE_TIMEOUT_SECS,
-    ensureOllamaAuthProxy,
-    getOllamaProxyToken,
-    persistProxyToken,
-    isWsl,
-    getOllamaWarmupCommand,
-    validateOllamaModel,
-    verifyInferenceRoute,
-    updateSandbox: (name, patch) => {
-      registry.updateSandbox(name, patch);
-    },
-    processPlatform: process.platform,
-    run,
-  });
-}
-
-// ── Step 6: Messaging channels ───────────────────────────────────
+const inferenceRuntimeApi = createInferenceRuntimeApi({
+  step,
+  remoteProviderConfig: REMOTE_PROVIDER_CONFIG,
+  runCapture,
+  ollamaPort: OLLAMA_PORT,
+  vllmPort: VLLM_PORT,
+  ollamaProxyPort: OLLAMA_PROXY_PORT,
+  experimental: EXPERIMENTAL,
+  isNonInteractive,
+  getNonInteractiveProvider,
+  getNonInteractiveModel,
+  note,
+  prompt,
+  getNavigationChoice,
+  exitOnboardFromPrompt,
+  normalizeProviderBaseUrl,
+  validateNvidiaApiKeyValue,
+  ensureApiKey,
+  defaultCloudModel: DEFAULT_CLOUD_MODEL,
+  promptCloudModel,
+  ensureNamedCredential,
+  getProbeAuthMode,
+  validateOpenAiLikeModel,
+  getCredential,
+  validateAnthropicModel,
+  anthropicEndpointUrl: ANTHROPIC_ENDPOINT_URL,
+  promptRemoteModel,
+  promptInputModel,
+  backToSelection: BACK_TO_SELECTION,
+  validateCustomOpenAiLikeSelection,
+  validateCustomAnthropicSelection,
+  validateAnthropicSelectionWithRetryMessage,
+  validateOpenAiLikeSelection,
+  shouldRequireResponsesToolCalling,
+  shouldSkipResponsesProbe,
+  nim,
+  gatewayName: GATEWAY_NAME,
+  getLocalProviderBaseUrl,
+  getLocalProviderValidationBaseUrl,
+  processPlatform: process.platform,
+  validateLocalProvider,
+  isWsl,
+  run,
+  sleep,
+  printOllamaExposureWarning,
+  startOllamaAuthProxy,
+  getOllamaModelOptions,
+  getDefaultOllamaModel,
+  promptOllamaModel,
+  prepareOllamaModel,
+  isSafeModelId,
+  runOpenshell,
+  hydrateCredentialEnv,
+  upsertProvider,
+  promptValidationRecovery,
+  classifyApplyFailure,
+  compactText,
+  redact,
+  localInferenceTimeoutSecs: LOCAL_INFERENCE_TIMEOUT_SECS,
+  ensureOllamaAuthProxy,
+  getOllamaProxyToken,
+  persistProxyToken,
+  getOllamaWarmupCommand,
+  validateOllamaModel,
+  verifyInferenceRoute,
+  updateSandbox: (name, patch) => {
+    registry.updateSandbox(name, patch);
+  },
+  runCurlProbe,
+  promptOrDefault,
+  log: (...args) => console.log(...args),
+  error: (...args) => console.error(...args),
+  exit: (code) => process.exit(code),
+  normalizeCredentialValue,
+  saveCredential,
+  env: process.env,
+  stdin: process.stdin,
+  stderr: process.stderr,
+  isInteractiveTty: process.stdout.isTTY,
+  noteLog: (...args) => console.log(...args),
+  getProviderSelectionConfig,
+  writeSandboxConfigSyncFile,
+  openshellShellCommand,
+  shellQuote,
+  cleanupTempDir,
+  fetchGatewayAuthTokenFromSandbox,
+  secureTempFile,
+});
 
 const {
-  TELEGRAM_NETWORK_CURL_CODES,
-  checkTelegramReachability: checkTelegramReachabilityWithDeps,
-} = require("./onboard-telegram");
-
-async function checkTelegramReachability(token: string) {
-  return checkTelegramReachabilityWithDeps(token, {
-    runCurlProbe,
-    isNonInteractive,
-    promptOrDefault,
-    log: console.log,
-    error: console.error,
-    exit: (code) => process.exit(code),
-  });
-}
-
-async function setupMessagingChannels() {
-  return setupMessagingChannelsWithDeps({
-    step,
-    isNonInteractive,
-    note,
-    getCredential,
-    normalizeCredentialValue,
-    prompt,
-    promptOrDefault,
-    saveCredential,
-    checkTelegramReachability,
-    env: process.env,
-    input: process.stdin,
-    output: process.stderr,
-  });
-}
-
-function getSuggestedPolicyPresets({ enabledChannels = null, webSearchConfig = null, provider = null } = {}) {
-  return getSuggestedPolicyPresetsWithDeps({
-    enabledChannels,
-    webSearchConfig,
-    provider,
-    getCredential,
-    env: process.env,
-    isInteractiveTty: process.stdout.isTTY,
-    isNonInteractive: isNonInteractive(),
-    note: console.log,
-  });
-}
-
-// ── Step 7: OpenClaw ─────────────────────────────────────────────
-
-async function setupOpenclaw(sandboxName, model, provider) {
-  return setupOpenclawWithDeps(sandboxName, model, provider, {
-    step,
-    getProviderSelectionConfig,
-    writeSandboxConfigSyncFile,
-    openshellShellCommand,
-    shellQuote,
-    run,
-    cleanupTempDir,
-    fetchGatewayAuthTokenFromSandbox,
-    log: console.log,
-    secureTempFile,
-  });
-}
+  setupNim,
+  setupInference,
+  checkTelegramReachability,
+  setupMessagingChannels,
+  getSuggestedPolicyPresets,
+  setupOpenclaw,
+} = inferenceRuntimeApi;
 
 // ── Step 7: Policy presets ───────────────────────────────────────
 
