@@ -17,6 +17,14 @@ export interface SuggestedPolicyPresetDeps {
   note?: (message: string) => void;
 }
 
+export interface TierPolicySuggestionDeps {
+  enabledChannels?: string[] | null;
+  webSearchConfig?: WebSearchConfig | null;
+  provider?: string | null;
+  knownPresetNames?: string[] | null;
+  resolveTierPresets: (tierName: string) => Array<{ name: string }>;
+}
+
 export function getSuggestedPolicyPresets(
   deps: SuggestedPolicyPresetDeps,
 ): string[] {
@@ -48,5 +56,25 @@ export function getSuggestedPolicyPresets(
 
   if (deps.webSearchConfig) suggestions.push("brave");
 
+  return suggestions;
+}
+
+export function computeSetupPresetSuggestions(
+  tierName: string,
+  deps: TierPolicySuggestionDeps,
+): string[] {
+  const { enabledChannels = null, webSearchConfig = null, provider = null } = deps;
+  const known = Array.isArray(deps.knownPresetNames) ? new Set(deps.knownPresetNames) : null;
+  const suggestions = deps.resolveTierPresets(tierName).map((preset) => preset.name);
+  const add = (name: string) => {
+    if (suggestions.includes(name)) return;
+    if (known && !known.has(name)) return;
+    suggestions.push(name);
+  };
+  if (webSearchConfig) add("brave");
+  if (provider && LOCAL_INFERENCE_PROVIDERS.includes(provider as never)) add("local-inference");
+  if (Array.isArray(enabledChannels)) {
+    for (const channel of enabledChannels) add(channel);
+  }
   return suggestions;
 }

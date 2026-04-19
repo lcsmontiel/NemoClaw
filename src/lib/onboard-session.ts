@@ -645,6 +645,9 @@ export function filterSafeUpdates(updates: SessionUpdates): Partial<Session> {
   if (Array.isArray(updates.policyPresets)) {
     safe.policyPresets = updates.policyPresets.filter((value) => typeof value === "string");
   }
+  if (Array.isArray(updates.messagingChannels)) {
+    safe.messagingChannels = updates.messagingChannels.filter((value) => typeof value === "string");
+  }
   if (isObject(updates.metadata) && typeof updates.metadata.gatewayName === "string") {
     safe.metadata = {
       gatewayName: updates.metadata.gatewayName,

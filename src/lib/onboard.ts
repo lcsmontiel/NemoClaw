@@ -48,7 +48,10 @@ const {
   ANTHROPIC_ENDPOINT_URL,
   REMOTE_PROVIDER_CONFIG,
 } = require("./onboard-remote-provider-config");
-const { LOCAL_INFERENCE_PROVIDERS } = require("./onboard-policy-suggestions");
+const {
+  computeSetupPresetSuggestions: computeSetupPresetSuggestionsWithDeps,
+  LOCAL_INFERENCE_PROVIDERS,
+} = require("./onboard-policy-suggestions");
 const { inferContainerRuntime, isWsl, shouldPatchCoredns } = require("./platform");
 const { resolveOpenshell } = require("./resolve-openshell");
 const {
@@ -140,8 +143,10 @@ const { MESSAGING_CHANNELS } = require("./onboard-messaging");
 const { promptValidatedSandboxName: promptValidatedSandboxNameWithDeps } = require("./onboard-sandbox-name");
 const {
   buildAuthenticatedDashboardUrl,
+  fetchGatewayAuthTokenFromSandbox: fetchGatewayAuthTokenFromSandboxWithDeps,
   getDashboardForwardPort,
   getDashboardForwardTarget,
+  getDashboardGuidanceLines,
 } = require("./onboard-dashboard");
 const { createDashboardApi, createPolicyUiApi } = require("./onboard-ui-api");
 const { runOnboardingEntry } = require("./onboard-entry");
@@ -177,6 +182,7 @@ const {
   printRemediationActions: renderRemediationActions,
 } = require("./onboard-remediation");
 const policies = require("./policies");
+const shields = require("./shields");
 const tiers = require("./tiers");
 const { ensureUsageNoticeConsent } = require("./usage-notice");
 const {
@@ -1144,7 +1150,8 @@ const inferenceRuntimeApi = createInferenceRuntimeApi({
   openshellShellCommand,
   shellQuote,
   cleanupTempDir,
-  fetchGatewayAuthTokenFromSandbox: (sandboxName) => fetchGatewayAuthTokenFromSandbox(sandboxName),
+  fetchGatewayAuthTokenFromSandbox: (sandboxName) =>
+    fetchGatewayAuthTokenFromSandboxWithDeps(sandboxName, { runOpenshell }),
   secureTempFile,
 });
 
@@ -1156,6 +1163,13 @@ const {
   getSuggestedPolicyPresets,
   setupOpenclaw,
 } = inferenceRuntimeApi;
+
+function computeSetupPresetSuggestions(tierName, options = {}) {
+  return computeSetupPresetSuggestionsWithDeps(tierName, {
+    ...options,
+    resolveTierPresets: (name) => tiers.resolveTierPresets(name),
+  });
+}
 
 // ── Step 7: Policy presets ───────────────────────────────────────
 
@@ -1185,7 +1199,6 @@ const {
   presetsCheckboxSelector,
   setupPoliciesWithSelection,
 } = policyUiApi;
-
 // ── Dashboard ────────────────────────────────────────────────────
 
 const CONTROL_UI_PORT = DASHBOARD_PORT;
@@ -1325,8 +1338,7 @@ async function onboard(opts = {}) {
     onceProcessExit: (handler) => {
       process.once("exit", handler);
     },
-  });
-}
+  });}
 
 module.exports = {
   buildProviderArgs,
@@ -1388,6 +1400,7 @@ module.exports = {
   isOpenclawReady,
   arePolicyPresetsApplied,
   getSuggestedPolicyPresets,
+  computeSetupPresetSuggestions,
   LOCAL_INFERENCE_PROVIDERS,
   presetsCheckboxSelector,
   selectPolicyTier,
