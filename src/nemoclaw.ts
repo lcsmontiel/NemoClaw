@@ -68,6 +68,10 @@ const sandboxState = require("./lib/sandbox-state");
 const { ensureOllamaAuthProxy } = require("./lib/onboard");
 const skillInstall = require("./lib/skill-install");
 const { parseSandboxPhase } = require("./lib/gateway-state");
+const {
+  getActiveSandboxSessions,
+  createSystemDeps: createSessionDeps,
+} = require("./lib/sandbox-session-state");
 
 // ── Global commands ──────────────────────────────────────────────
 
@@ -131,6 +135,18 @@ function captureOpenshell(args, opts = {}) {
 }
 
 function cleanupGatewayAfterLastSandbox() {
+  // Warn if active sessions exist on any sandbox still using this gateway.
+  // This path runs automatically after the last sandbox is destroyed, so we
+  // log but don't block (the sandbox is already gone at this point).
+  const opsBinCleanup = resolveOpenshell();
+  if (opsBinCleanup) {
+    const deps = createSessionDeps(opsBinCleanup);
+    const fwdCheck = deps.getForwardList();
+    if (fwdCheck && /running/i.test(fwdCheck)) {
+      console.log(`  ${D}Note: Tearing down gateway with active port forwards.${R}`);
+    }
+  }
+
   runOpenshell(["forward", "stop", DASHBOARD_FORWARD_PORT], { ignoreError: true });
   runOpenshell(["gateway", "destroy", "-g", NEMOCLAW_GATEWAY_NAME], { ignoreError: true });
   run(
@@ -1152,11 +1168,23 @@ function showStatus() {
 }
 
 async function listSandboxes() {
+  const opsBinList = resolveOpenshell();
+  const sessionDeps = opsBinList ? createSessionDeps(opsBinList) : null;
   await listSandboxesCommand({
     recoverRegistryEntries: () => recoverRegistryEntries(),
     getLiveInference: () =>
       parseGatewayInference(captureOpenshell(["inference", "get"], { ignoreError: true }).output),
     loadLastSession: () => onboardSession.loadSession(),
+    getActiveSessionCount: sessionDeps
+      ? (name) => {
+          try {
+            const result = getActiveSandboxSessions(name, sessionDeps);
+            return result.detected ? result.sessions.length : null;
+          } catch {
+            return null;
+          }
+        }
+      : undefined,
     log: console.log,
   });
 }
@@ -1176,6 +1204,22 @@ async function sandboxConnect(sandboxName, { dangerouslySkipPermissions = false 
     }
   } catch {
     /* non-fatal — don't block connect on version check failure */
+  }
+
+  // Active session hint — inform if already connected in another terminal
+  try {
+    const opsBinConnect = resolveOpenshell();
+    if (opsBinConnect) {
+      const sessionResult = getActiveSandboxSessions(sandboxName, createSessionDeps(opsBinConnect));
+      if (sessionResult.detected && sessionResult.sessions.length > 0) {
+        const count = sessionResult.sessions.length;
+        console.log(
+          `  ${D}Note: ${count} existing SSH session${count > 1 ? "s" : ""} to '${sandboxName}' detected (another terminal).${R}`,
+        );
+      }
+    }
+  } catch {
+    /* non-fatal — don't block connect on session detection failure */
   }
 
   // Check both the CLI flag and the registry for dangerously-skip-permissions.
@@ -1270,6 +1314,21 @@ async function sandboxStatus(sandboxName) {
     }
     console.log(`    GPU:      ${sb.gpuEnabled ? "yes" : "no"}`);
     console.log(`    Policies: ${(sb.policies || []).join(", ") || "none"}`);
+
+    // Active session indicator
+    try {
+      const opsBinStatus = resolveOpenshell();
+      if (opsBinStatus) {
+        const sessionResult = getActiveSandboxSessions(sandboxName, createSessionDeps(opsBinStatus));
+        if (sessionResult.detected) {
+          const count = sessionResult.sessions.length;
+          console.log(`    Connected: ${count > 0 ? `${G}yes${R} (${count} session${count > 1 ? "s" : ""})` : "no"}`);
+        }
+      }
+    } catch {
+      /* non-fatal */
+    }
+
     if (sb.dangerouslySkipPermissions) {
       console.log(`    Permissions: dangerously-skip-permissions (shields permanently down)`);
     } else if (shields.isShieldsDown(sandboxName)) {
@@ -1727,6 +1786,28 @@ function cleanupSandboxServices(sandboxName, { stopHostServices = false } = {}) 
 
 async function sandboxDestroy(sandboxName, args = []) {
   const skipConfirm = args.includes("--yes") || args.includes("--force");
+
+  // Active session guard — warn before destroying a sandbox with live SSH connections
+  const opsBin = resolveOpenshell();
+  if (opsBin) {
+    const sessionResult = getActiveSandboxSessions(sandboxName, createSessionDeps(opsBin));
+    if (sessionResult.detected && sessionResult.sessions.length > 0) {
+      const count = sessionResult.sessions.length;
+      const plural = count > 1 ? "sessions" : "session";
+      console.log("");
+      console.log(`  ${YW}⚠  Active SSH ${plural} detected for '${sandboxName}' (${count} connection${count > 1 ? "s" : ""})${R}`);
+      console.log(`  Destroying this sandbox will terminate ${count === 1 ? "the" : "all"} active ${plural} with a Broken pipe error.`);
+      console.log("");
+      if (!skipConfirm) {
+        const answer = await askPrompt("  Destroy anyway? [y/N]: ");
+        if (answer.trim().toLowerCase() !== "y" && answer.trim().toLowerCase() !== "yes") {
+          console.log("  Cancelled.");
+          return;
+        }
+      }
+    }
+  }
+
   if (!skipConfirm) {
     console.log(`  ${YW}Destroy sandbox '${sandboxName}'?${R}`);
     console.log("  This will permanently delete the sandbox and all workspace files inside it.");
@@ -1807,6 +1888,28 @@ async function sandboxRebuild(sandboxName, args = [], opts = {}) {
         throw new Error(msg);
       }
     : (_msg, code = 1) => process.exit(code);
+
+  // Active session guard — warn before rebuilding a sandbox with live SSH connections
+  const opsBinRebuild = resolveOpenshell();
+  if (opsBinRebuild) {
+    const sessionResult = getActiveSandboxSessions(sandboxName, createSessionDeps(opsBinRebuild));
+    if (sessionResult.detected && sessionResult.sessions.length > 0) {
+      const count = sessionResult.sessions.length;
+      const plural = count > 1 ? "sessions" : "session";
+      console.log("");
+      console.log(`  ${YW}⚠  Active SSH ${plural} detected for '${sandboxName}' (${count} connection${count > 1 ? "s" : ""})${R}`);
+      console.log(`  Rebuilding this sandbox will terminate ${count === 1 ? "the" : "all"} active ${plural} with a Broken pipe error.`);
+      console.log("");
+      if (!skipConfirm) {
+        const answer = await askPrompt("  Rebuild anyway? [y/N]: ");
+        if (answer.trim().toLowerCase() !== "y" && answer.trim().toLowerCase() !== "yes") {
+          console.log("  Cancelled.");
+          return;
+        }
+      }
+    }
+  }
+
   const sb = registry.getSandbox(sandboxName);
   if (!sb) {
     console.error(`  Sandbox '${sandboxName}' not found in registry.`);
