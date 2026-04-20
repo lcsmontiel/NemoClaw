@@ -99,7 +99,11 @@ function getPodmanSocketCandidates(opts: PlatformLookupOptions = {}): string[] {
     ];
   }
 
-  return [`/run/user/${String(uid)}/podman/podman.sock`, "/run/podman/podman.sock"];
+  if (platform === "linux") {
+    return [`/run/user/${String(uid)}/podman/podman.sock`, "/run/podman/podman.sock"];
+  }
+
+  return [];
 }
 
 function getDockerSocketCandidates(opts: PlatformLookupOptions = {}): string[] {

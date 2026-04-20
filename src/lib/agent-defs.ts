@@ -110,12 +110,27 @@ function readStringArray(record: UnknownRecord, key: string): string[] | undefin
   return value.filter((entry): entry is string => typeof entry === "string");
 }
 
-function readNumberArray(record: UnknownRecord, key: string): number[] | undefined {
+function isValidPort(value: unknown): value is number {
+  return typeof value === "number" && Number.isInteger(value) && value >= 1 && value <= 65535;
+}
+
+function readPortArray(record: UnknownRecord, key: string): number[] | undefined {
   const value = record[key];
-  if (!Array.isArray(value)) return undefined;
-  return value.filter(
-    (entry): entry is number => typeof entry === "number" && Number.isFinite(entry),
-  );
+  if (value === undefined) return undefined;
+  if (!Array.isArray(value)) {
+    throw new Error(`Agent manifest field '${key}' must be an array of TCP ports`);
+  }
+
+  const ports = value.map((entry, index) => {
+    if (!isValidPort(entry)) {
+      throw new Error(
+        `Agent manifest field '${key}[${String(index)}]' must be an integer TCP port between 1 and 65535`,
+      );
+    }
+    return entry;
+  });
+
+  return ports.length > 0 ? ports : undefined;
 }
 
 function readStringMap(record: UnknownRecord, key: string): StringMap | undefined {
@@ -139,10 +154,15 @@ function readHealthProbe(record: UnknownRecord): AgentHealthProbe | undefined {
   const port = healthProbe.port;
   const timeoutSeconds = healthProbe.timeout_seconds;
 
+  if (port !== undefined && !isValidPort(port)) {
+    throw new Error(
+      "Agent manifest field 'health_probe.port' must be an integer TCP port between 1 and 65535",
+    );
+  }
+
   if (
     typeof url === "string" &&
-    typeof port === "number" &&
-    Number.isFinite(port) &&
+    isValidPort(port) &&
     typeof timeoutSeconds === "number" &&
     Number.isFinite(timeoutSeconds)
   ) {
@@ -207,7 +227,7 @@ export function loadAgent(name: string): AgentDefinition {
   const versionCommand = readString(raw, "version_command");
   const expectedVersion = readString(raw, "expected_version");
   const gatewayCommand = readString(raw, "gateway_command");
-  const forwardPorts = readNumberArray(raw, "forward_ports");
+  const forwardPorts = readPortArray(raw, "forward_ports");
   const healthProbe = readHealthProbe(raw);
   const config = readObject(raw, "config");
   const stateDirs = readStringArray(raw, "state_dirs");

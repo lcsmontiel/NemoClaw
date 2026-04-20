@@ -725,7 +725,7 @@ export function summarizeForDebug(
     policyPresets: session.policyPresets,
     lastStepStarted: session.lastStepStarted,
     lastCompletedStep: session.lastCompletedStep,
-    failure: session.failure,
+    failure: sanitizeFailure(session.failure),
     steps: Object.fromEntries(
       Object.entries(session.steps).map(([name, step]) => [
         name,

@@ -177,6 +177,33 @@ function countMatches(text: string, re: RegExp): number {
   return matches ? matches.length : 0;
 }
 
+function collectCommentText(text: string): string {
+  const scanner = ts.createScanner(
+    ts.ScriptTarget.Latest,
+    false,
+    ts.LanguageVariant.Standard,
+    text,
+  );
+  let comments = "";
+
+  while (true) {
+    const token = scanner.scan();
+    if (token === ts.SyntaxKind.EndOfFileToken) {
+      return comments;
+    }
+    if (
+      token === ts.SyntaxKind.SingleLineCommentTrivia ||
+      token === ts.SyntaxKind.MultiLineCommentTrivia
+    ) {
+      comments += `${scanner.getTokenText()}\n`;
+    }
+  }
+}
+
+function countDirectiveComments(text: string): number {
+  return countMatches(collectCommentText(text), COMMENT_DIRECTIVE_RE);
+}
+
 function hasLeadingTsNoCheck(text: string): boolean {
   let offset = 0;
   if (text.startsWith("#!")) {
@@ -389,21 +416,140 @@ function buildTypeAliasMap(sourceFile: ts.SourceFile): Map<string, ts.TypeNode> 
   return aliases;
 }
 
+function isWeakKeywordType(typeNode: ts.TypeNode): boolean {
+  return (
+    typeNode.kind === ts.SyntaxKind.AnyKeyword ||
+    typeNode.kind === ts.SyntaxKind.UnknownKeyword ||
+    typeNode.kind === ts.SyntaxKind.ObjectKeyword
+  );
+}
+
+function containsWeakTypeInNodeList(
+  typeNodes: readonly ts.TypeNode[],
+  aliases: Map<string, ts.TypeNode>,
+  seen: ReadonlySet<string>,
+): boolean {
+  return typeNodes.some((typeNode) => containsWeakType(typeNode, aliases, new Set(seen)));
+}
+
+function containsWeakTypeInTupleType(
+  tupleType: ts.TupleTypeNode,
+  aliases: Map<string, ts.TypeNode>,
+  seen: ReadonlySet<string>,
+): boolean {
+  return tupleType.elements.some((element) =>
+    containsWeakType(
+      ts.isNamedTupleMember(element) ? element.type : element,
+      aliases,
+      new Set(seen),
+    ),
+  );
+}
+
+function containsWeakTypeInTypeLiteral(
+  typeLiteral: ts.TypeLiteralNode,
+  aliases: Map<string, ts.TypeNode>,
+  seen: ReadonlySet<string>,
+): boolean {
+  if (typeLiteral.members.length === 0) return true;
+
+  return typeLiteral.members.some((member) => {
+    if (
+      ts.isPropertySignature(member) ||
+      ts.isMethodSignature(member) ||
+      ts.isIndexSignatureDeclaration(member) ||
+      ts.isCallSignatureDeclaration(member) ||
+      ts.isConstructSignatureDeclaration(member)
+    ) {
+      return containsWeakType(member.type, aliases, new Set(seen));
+    }
+    return false;
+  });
+}
+
+function containsWeakTypeInIndexedAccessType(
+  indexedAccessType: ts.IndexedAccessTypeNode,
+  aliases: Map<string, ts.TypeNode>,
+  seen: ReadonlySet<string>,
+): boolean {
+  return (
+    containsWeakType(indexedAccessType.objectType, aliases, new Set(seen)) ||
+    containsWeakType(indexedAccessType.indexType, aliases, new Set(seen))
+  );
+}
+
+function containsWeakTypeInConditionalType(
+  conditionalType: ts.ConditionalTypeNode,
+  aliases: Map<string, ts.TypeNode>,
+  seen: ReadonlySet<string>,
+): boolean {
+  return containsWeakTypeInNodeList(
+    [
+      conditionalType.checkType,
+      conditionalType.extendsType,
+      conditionalType.trueType,
+      conditionalType.falseType,
+    ],
+    aliases,
+    seen,
+  );
+}
+
+function containsWeakTypeInSignatureType(
+  signatureType: ts.FunctionTypeNode | ts.ConstructorTypeNode,
+  aliases: Map<string, ts.TypeNode>,
+  seen: ReadonlySet<string>,
+): boolean {
+  return (
+    signatureType.parameters.some((parameter) =>
+      containsWeakType(parameter.type, aliases, new Set(seen)),
+    ) || containsWeakType(signatureType.type, aliases, new Set(seen))
+  );
+}
+
+function containsWeakTypeInTypeArguments(
+  typeArguments: readonly ts.TypeNode[] | undefined,
+  aliases: Map<string, ts.TypeNode>,
+  seen: ReadonlySet<string>,
+): boolean {
+  return typeArguments
+    ? typeArguments.some((argument) => containsWeakType(argument, aliases, new Set(seen)))
+    : false;
+}
+
+function containsWeakTypeInTypeReference(
+  typeReference: ts.TypeReferenceNode,
+  aliases: Map<string, ts.TypeNode>,
+  seen: ReadonlySet<string>,
+): boolean {
+  if (isDirectRecordStringUnknown(typeReference, aliases)) {
+    return true;
+  }
+
+  if (containsWeakTypeInTypeArguments(typeReference.typeArguments, aliases, seen)) {
+    return true;
+  }
+
+  if (ts.isIdentifier(typeReference.typeName)) {
+    const aliasName = typeReference.typeName.text;
+    const aliasType = aliases.get(aliasName);
+    if (aliasType && !seen.has(aliasName)) {
+      const nextSeen = new Set(seen);
+      nextSeen.add(aliasName);
+      return containsWeakType(aliasType, aliases, nextSeen);
+    }
+  }
+
+  return false;
+}
+
 function containsWeakType(
   typeNode: ts.TypeNode | undefined,
   aliases: Map<string, ts.TypeNode>,
   seen = new Set<string>(),
 ): boolean {
   if (!typeNode) return false;
-
-  switch (typeNode.kind) {
-    case ts.SyntaxKind.AnyKeyword:
-    case ts.SyntaxKind.UnknownKeyword:
-    case ts.SyntaxKind.ObjectKeyword:
-      return true;
-    default:
-      break;
-  }
+  if (isWeakKeywordType(typeNode)) return true;
 
   if (ts.isParenthesizedTypeNode(typeNode)) {
     return containsWeakType(typeNode.type, aliases, seen);
@@ -414,33 +560,15 @@ function containsWeakType(
   }
 
   if (ts.isTupleTypeNode(typeNode)) {
-    return typeNode.elements.some((element) =>
-      containsWeakType(
-        ts.isNamedTupleMember(element) ? element.type : element,
-        aliases,
-        new Set(seen),
-      ),
-    );
+    return containsWeakTypeInTupleType(typeNode, aliases, seen);
   }
 
   if (ts.isUnionTypeNode(typeNode) || ts.isIntersectionTypeNode(typeNode)) {
-    return typeNode.types.some((part) => containsWeakType(part, aliases, new Set(seen)));
+    return containsWeakTypeInNodeList(typeNode.types, aliases, seen);
   }
 
   if (ts.isTypeLiteralNode(typeNode)) {
-    if (typeNode.members.length === 0) return true;
-    return typeNode.members.some((member) => {
-      if (
-        ts.isPropertySignature(member) ||
-        ts.isMethodSignature(member) ||
-        ts.isIndexSignatureDeclaration(member) ||
-        ts.isCallSignatureDeclaration(member) ||
-        ts.isConstructSignatureDeclaration(member)
-      ) {
-        return containsWeakType(member.type, aliases, new Set(seen));
-      }
-      return false;
-    });
+    return containsWeakTypeInTypeLiteral(typeNode, aliases, seen);
   }
 
   if (ts.isTypeOperatorNode(typeNode)) {
@@ -448,10 +576,7 @@ function containsWeakType(
   }
 
   if (ts.isIndexedAccessTypeNode(typeNode)) {
-    return (
-      containsWeakType(typeNode.objectType, aliases, new Set(seen)) ||
-      containsWeakType(typeNode.indexType, aliases, new Set(seen))
-    );
+    return containsWeakTypeInIndexedAccessType(typeNode, aliases, seen);
   }
 
   if (ts.isMappedTypeNode(typeNode)) {
@@ -459,20 +584,11 @@ function containsWeakType(
   }
 
   if (ts.isConditionalTypeNode(typeNode)) {
-    return (
-      containsWeakType(typeNode.checkType, aliases, new Set(seen)) ||
-      containsWeakType(typeNode.extendsType, aliases, new Set(seen)) ||
-      containsWeakType(typeNode.trueType, aliases, new Set(seen)) ||
-      containsWeakType(typeNode.falseType, aliases, new Set(seen))
-    );
+    return containsWeakTypeInConditionalType(typeNode, aliases, seen);
   }
 
   if (ts.isFunctionTypeNode(typeNode) || ts.isConstructorTypeNode(typeNode)) {
-    return (
-      typeNode.parameters.some((parameter) =>
-        containsWeakType(parameter.type, aliases, new Set(seen)),
-      ) || containsWeakType(typeNode.type, aliases, new Set(seen))
-    );
+    return containsWeakTypeInSignatureType(typeNode, aliases, seen);
   }
 
   if (ts.isTypePredicateNode(typeNode)) {
@@ -480,24 +596,7 @@ function containsWeakType(
   }
 
   if (ts.isTypeReferenceNode(typeNode)) {
-    if (isDirectRecordStringUnknown(typeNode, aliases)) {
-      return true;
-    }
-
-    const typeArguments = typeNode.typeArguments ?? [];
-    if (typeArguments.some((argument) => containsWeakType(argument, aliases, new Set(seen)))) {
-      return true;
-    }
-
-    if (ts.isIdentifier(typeNode.typeName)) {
-      const aliasName = typeNode.typeName.text;
-      const aliasType = aliases.get(aliasName);
-      if (aliasType && !seen.has(aliasName)) {
-        const nextSeen = new Set(seen);
-        nextSeen.add(aliasName);
-        return containsWeakType(aliasType, aliases, nextSeen);
-      }
-    }
+    return containsWeakTypeInTypeReference(typeNode, aliases, seen);
   }
 
   return false;
@@ -781,7 +880,7 @@ function analyzeFile(absPath: string, rootDir: string, project: ProjectInfo): Ra
   const functions: RawFunctionData[] = [];
   const functionStack: RawFunctionData[] = [];
 
-  addPattern(fileMetrics, "tsDirectiveCount", countMatches(text, COMMENT_DIRECTIVE_RE));
+  addPattern(fileMetrics, "tsDirectiveCount", countDirectiveComments(text));
 
   function applyPattern(key: keyof PatternCounts, amount = 1): void {
     addPattern(fileMetrics, key, amount);

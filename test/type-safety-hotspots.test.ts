@@ -58,7 +58,14 @@ export function disabled(value) {
   return value?.flag;
 }
 `,
-      "src/stringy.ts": `export const banner = "// @ts-nocheck";
+      "src/stringy.ts":
+        `export const banner = "// @ts-nocheck @ts-ignore";
+export const template = ` +
+        "String.raw`@ts-expect-error`" +
+        `;
+`,
+      "src/commented.ts": `// @ts-ignore this is a real directive comment
+export const value = 1;
 `,
     });
 
@@ -69,9 +76,12 @@ export function disabled(value) {
 
     const disabled = report.files.find((file) => file.filePath === "src/disabled.ts");
     const stringy = report.files.find((file) => file.filePath === "src/stringy.ts");
+    const commented = report.files.find((file) => file.filePath === "src/commented.ts");
 
     expect(disabled?.noCheck).toBe(true);
     expect(stringy?.noCheck).toBe(false);
+    expect(stringy?.tsDirectiveCount).toBe(0);
+    expect(commented?.tsDirectiveCount).toBe(1);
     expect(disabled?.score).toBeGreaterThan(0);
   });
 

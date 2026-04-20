@@ -229,8 +229,9 @@ function registerRoot(
     sandboxGroup: string;
     required: boolean;
   },
+  env: NodeJS.ProcessEnv = process.env,
 ): void {
-  const resolvedPath = resolveUserPath(params.pathValue);
+  const resolvedPath = resolveUserPath(params.pathValue, env);
   const normalized = normalizeHostPath(resolvedPath);
   const existing = rootMap.get(normalized);
   if (existing) {
@@ -262,6 +263,7 @@ function defaultWorkspacePath(env: NodeJS.ProcessEnv = process.env): string {
 function collectExternalRoots(
   config: OpenClawConfigDocument | null,
   stateDir: string,
+  env: NodeJS.ProcessEnv = process.env,
 ): { roots: MigrationExternalRoot[]; warnings: string[]; errors: string[] } {
   const warnings: string[] = [];
   const errors: string[] = [];
@@ -273,15 +275,19 @@ function collectExternalRoots(
   const skillLoad = readRecordKey(readRecordKey(config, "skills"), "load");
 
   const defaultsWorkspace = readTrimmedString(agentDefaults?.workspace);
-  const defaultWorkspace = defaultsWorkspace ?? defaultWorkspacePath();
-  registerRoot(rootMap, {
-    pathValue: defaultWorkspace,
-    kind: "workspace",
-    label: "default-workspace",
-    bindingPath: "agents.defaults.workspace",
-    sandboxGroup: "workspaces",
-    required: typeof defaultsWorkspace === "string" && defaultsWorkspace.trim().length > 0,
-  });
+  const defaultWorkspace = defaultsWorkspace ?? defaultWorkspacePath(env);
+  registerRoot(
+    rootMap,
+    {
+      pathValue: defaultWorkspace,
+      kind: "workspace",
+      label: "default-workspace",
+      bindingPath: "agents.defaults.workspace",
+      sandboxGroup: "workspaces",
+      required: typeof defaultsWorkspace === "string" && defaultsWorkspace.trim().length > 0,
+    },
+    env,
+  );
 
   if (agentList) {
     agentList.forEach((entry, index) => {
@@ -294,25 +300,33 @@ function collectExternalRoots(
       const agentDir = readTrimmedString(agent.agentDir);
 
       if (workspace) {
-        registerRoot(rootMap, {
-          pathValue: workspace,
-          kind: "workspace",
-          label: `${agentId}-workspace`,
-          bindingPath: `agents.list[${String(index)}].workspace`,
-          sandboxGroup: "workspaces",
-          required: true,
-        });
+        registerRoot(
+          rootMap,
+          {
+            pathValue: workspace,
+            kind: "workspace",
+            label: `${agentId}-workspace`,
+            bindingPath: `agents.list[${String(index)}].workspace`,
+            sandboxGroup: "workspaces",
+            required: true,
+          },
+          env,
+        );
       }
 
       if (agentDir) {
-        registerRoot(rootMap, {
-          pathValue: agentDir,
-          kind: "agentDir",
-          label: `${agentId}-agent-dir`,
-          bindingPath: `agents.list[${String(index)}].agentDir`,
-          sandboxGroup: "agent-dirs",
-          required: true,
-        });
+        registerRoot(
+          rootMap,
+          {
+            pathValue: agentDir,
+            kind: "agentDir",
+            label: `${agentId}-agent-dir`,
+            bindingPath: `agents.list[${String(index)}].agentDir`,
+            sandboxGroup: "agent-dirs",
+            required: true,
+          },
+          env,
+        );
       }
     });
   }
@@ -324,14 +338,18 @@ function collectExternalRoots(
       if (!extraDir) {
         return;
       }
-      registerRoot(rootMap, {
-        pathValue: extraDir,
-        kind: "skillsExtraDir",
-        label: `skills-extra-${String(index + 1)}`,
-        bindingPath: `skills.load.extraDirs[${String(index)}]`,
-        sandboxGroup: "skills",
-        required: true,
-      });
+      registerRoot(
+        rootMap,
+        {
+          pathValue: extraDir,
+          kind: "skillsExtraDir",
+          label: `skills-extra-${String(index + 1)}`,
+          bindingPath: `skills.load.extraDirs[${String(index)}]`,
+          sandboxGroup: "skills",
+          required: true,
+        },
+        env,
+      );
     });
   }
 
@@ -427,7 +445,7 @@ export function detectHostOpenClaw(env: NodeJS.ProcessEnv = process.env): HostOp
     errors.push(`Failed to parse OpenClaw config at ${configPath}: ${msg}`);
   }
 
-  const rootInfo = collectExternalRoots(config, stateDir);
+  const rootInfo = collectExternalRoots(config, stateDir, env);
   warnings.push(...rootInfo.warnings);
   errors.push(...rootInfo.errors);
 
