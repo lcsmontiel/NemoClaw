@@ -4770,236 +4770,35 @@ async function setupPoliciesWithSelection(sandboxName, options = {}) {
 
 // ── Dashboard ────────────────────────────────────────────────────
 
-const CONTROL_UI_PORT = DASHBOARD_PORT;
+// Dashboard functions — moved to onboard-dashboard.ts
+const onboardDashboard = require("./onboard-dashboard");
+const {
+  CONTROL_UI_PORT,
+  buildAuthenticatedDashboardUrl,
+  getDashboardForwardPort,
+  getDashboardGuidanceLines,
+} = onboardDashboard;
+const { resolveDashboardForwardTarget } = onboardDashboard;
 
-// Dashboard helpers — delegated to src/lib/dashboard.ts
-// isLoopbackHostname — see urlUtils import above
-const { resolveDashboardForwardTarget, buildControlUiUrls } = dashboard;
-
-function ensureDashboardForward(sandboxName, chatUiUrl = `http://127.0.0.1:${CONTROL_UI_PORT}`) {
-  const portToStop = getDashboardForwardPort(chatUiUrl);
-  const forwardTarget = getDashboardForwardTarget(chatUiUrl);
-  runOpenshell(["forward", "stop", portToStop], { ignoreError: true });
-  // Use stdio "ignore" to prevent spawnSync from waiting on inherited pipe fds.
-  // The --background flag forks a child that inherits stdout/stderr; if those are
-  // pipes, spawnSync blocks until the background process exits (never).
-  const fwdResult = runOpenshell(["forward", "start", "--background", forwardTarget, sandboxName], {
-    ignoreError: true,
-    stdio: ["ignore", "ignore", "ignore"],
-  });
-  // A non-zero exit from the parent means forward start rejected before forking —
-  // typically because the port is already bound by another process (e.g. a local
-  // Docker test container with -p PORT:PORT). The error is otherwise swallowed by
-  // ignoreError + stdio:ignore, leaving the dashboard URL silently unreachable (#1925).
-  if (fwdResult && fwdResult.status !== 0) {
-    console.warn(`! Port ${portToStop} forward did not start — port may be in use by another process.`);
-    console.warn(`  Check: docker ps --format 'table {{.Names}}\\t{{.Ports}}' | grep ${portToStop}`);
-    console.warn(`  Free the port, then reconnect: nemoclaw ${sandboxName} connect`);
-  }
+// Wrappers injecting runOpenshell / openshellShellCommand
+function ensureDashboardForward(sandboxName, chatUiUrl) {
+  return onboardDashboard.ensureDashboardForward(sandboxName, chatUiUrl, runOpenshell);
 }
-
-function findOpenclawJsonPath(dir) {
-  if (!fs.existsSync(dir)) return null;
-  const entries = fs.readdirSync(dir, { withFileTypes: true });
-  for (const e of entries) {
-    const p = path.join(dir, e.name);
-    if (e.isDirectory()) {
-      const found = findOpenclawJsonPath(p);
-      if (found) return found;
-    } else if (e.name === "openclaw.json") {
-      return p;
-    }
-  }
-  return null;
-}
-
-/**
- * Pull gateway.auth.token from the sandbox image via openshell sandbox download
- * so onboard can print copy-paste Control UI URLs with #token= (same idea as nemoclaw-start.sh).
- */
 function fetchGatewayAuthTokenFromSandbox(sandboxName) {
-  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-token-"));
-  try {
-    const destDir = `${tmpDir}${path.sep}`;
-    const result = runOpenshell(
-      ["sandbox", "download", sandboxName, "/sandbox/.openclaw/openclaw.json", destDir],
-      { ignoreError: true, stdio: ["ignore", "ignore", "ignore"] },
-    );
-    if (result.status !== 0) return null;
-    const jsonPath = findOpenclawJsonPath(tmpDir);
-    if (!jsonPath) return null;
-    const cfg = JSON.parse(fs.readFileSync(jsonPath, "utf-8"));
-    const token = cfg && cfg.gateway && cfg.gateway.auth && cfg.gateway.auth.token;
-    return typeof token === "string" && token.length > 0 ? token : null;
-  } catch {
-    return null;
-  } finally {
-    try {
-      fs.rmSync(tmpDir, { recursive: true, force: true });
-    } catch {
-      // ignore cleanup errors
-    }
-  }
+  return onboardDashboard.fetchGatewayAuthTokenFromSandbox(sandboxName, runOpenshell);
 }
-
-// buildControlUiUrls — see dashboard import above
-
-function getDashboardForwardPort(
-  chatUiUrl = process.env.CHAT_UI_URL || `http://127.0.0.1:${CONTROL_UI_PORT}`,
-) {
-  const forwardTarget = resolveDashboardForwardTarget(chatUiUrl);
-  return forwardTarget.includes(":")
-    ? (forwardTarget.split(":").pop() ?? String(CONTROL_UI_PORT))
-    : forwardTarget;
-}
-
-function getDashboardForwardTarget(
-  chatUiUrl = process.env.CHAT_UI_URL || `http://127.0.0.1:${CONTROL_UI_PORT}`,
-  options = {},
-) {
-  const port = getDashboardForwardPort(chatUiUrl);
-  return isWsl(options) ? `0.0.0.0:${port}` : resolveDashboardForwardTarget(chatUiUrl);
-}
-
 function getDashboardForwardStartCommand(sandboxName, options = {}) {
-  const chatUiUrl =
-    options.chatUiUrl || process.env.CHAT_UI_URL || `http://127.0.0.1:${CONTROL_UI_PORT}`;
-  const forwardTarget = getDashboardForwardTarget(chatUiUrl, options);
-  return `${openshellShellCommand(
-    ["forward", "start", "--background", forwardTarget, sandboxName],
-    options,
-  )}`;
+  return onboardDashboard.getDashboardForwardStartCommand(sandboxName, options, openshellShellCommand);
 }
-
-function buildAuthenticatedDashboardUrl(baseUrl, token = null) {
-  if (!token) return baseUrl;
-  return `${baseUrl}#token=${encodeURIComponent(token)}`;
-}
-
-function getWslHostAddress(options = {}) {
-  if (options.wslHostAddress) {
-    return options.wslHostAddress;
-  }
-  if (!isWsl(options)) {
-    return null;
-  }
-  const runCaptureFn = options.runCapture || runCapture;
-  const output = runCaptureFn("hostname -I 2>/dev/null", { ignoreError: true });
-  const candidates = String(output || "")
-    .trim()
-    .split(/\s+/)
-    .filter(Boolean);
-  return candidates[0] || null;
-}
-
 function getDashboardAccessInfo(sandboxName, options = {}) {
-  const token = Object.prototype.hasOwnProperty.call(options, "token")
-    ? options.token
-    : fetchGatewayAuthTokenFromSandbox(sandboxName);
-  const chatUiUrl =
-    options.chatUiUrl || process.env.CHAT_UI_URL || `http://127.0.0.1:${CONTROL_UI_PORT}`;
-  const dashboardPort = Number(getDashboardForwardPort(chatUiUrl));
-  const dashboardAccess = buildControlUiUrls(token, dashboardPort).map((url, index) => ({
-    label: index === 0 ? "Dashboard" : `Alt ${index}`,
-    url: buildAuthenticatedDashboardUrl(url, null),
-  }));
-
-  const wslHostAddress = getWslHostAddress(options);
-  if (wslHostAddress) {
-    const wslUrl = buildAuthenticatedDashboardUrl(
-      `http://${wslHostAddress}:${dashboardPort}/`,
-      token,
-    );
-    if (!dashboardAccess.some((access) => access.url === wslUrl)) {
-      dashboardAccess.push({ label: "VS Code/WSL", url: wslUrl });
-    }
-  }
-
-  return dashboardAccess;
+  return onboardDashboard.getDashboardAccessInfo(sandboxName, options, runOpenshell);
 }
-
-function getDashboardGuidanceLines(dashboardAccess = [], options = {}) {
-  const dashboardPort = getDashboardForwardPort(
-    options.chatUiUrl || process.env.CHAT_UI_URL || `http://127.0.0.1:${CONTROL_UI_PORT}`,
-  );
-  const guidance = [`Port ${dashboardPort} must be forwarded before opening these URLs.`];
-  if (isWsl(options)) {
-    guidance.push(
-      "WSL detected: if localhost fails in Windows, use the WSL host IP shown by `hostname -I`.",
-    );
-  }
-  if (dashboardAccess.length === 0) {
-    guidance.push("No dashboard URLs were generated.");
-  }
-  return guidance;
-}
-
 function printDashboard(sandboxName, model, provider, nimContainer = null, agent = null) {
-  const nimStat = nimContainer ? nim.nimStatusByName(nimContainer) : nim.nimStatus(sandboxName);
-  const nimLabel = nimStat.running ? "running" : "not running";
-
-  const providerLabel = getProviderLabel(provider);
-
-  const token = fetchGatewayAuthTokenFromSandbox(sandboxName);
-  const dashboardAccess = getDashboardAccessInfo(sandboxName, { token });
-  const guidanceLines = getDashboardGuidanceLines(dashboardAccess);
-
-  console.log("");
-  console.log(`  ${"─".repeat(50)}`);
-  // console.log(`  Dashboard    http://localhost:${DASHBOARD_PORT}/`);
-  console.log(`  Sandbox      ${sandboxName} (Landlock + seccomp + netns)`);
-  console.log(`  Model        ${model} (${providerLabel})`);
-  console.log(`  NIM          ${nimLabel}`);
-  console.log(`  ${"─".repeat(50)}`);
-  console.log(`  Run:         nemoclaw ${sandboxName} connect`);
-  console.log(`  Status:      nemoclaw ${sandboxName} status`);
-  console.log(`  Logs:        nemoclaw ${sandboxName} logs --follow`);
-  console.log("");
-  if (agent) {
-    agentOnboard.printDashboardUi(sandboxName, token, agent, {
-      note,
-      buildControlUiUrls: (tokenValue, port) => {
-        const urls = buildControlUiUrls(tokenValue, port);
-        const wslHostAddress = getWslHostAddress();
-        if (wslHostAddress) {
-          const wslUrl = buildAuthenticatedDashboardUrl(
-            `http://${wslHostAddress}:${port}/`,
-            tokenValue,
-          );
-          if (!urls.includes(wslUrl)) {
-            urls.push(wslUrl);
-          }
-        }
-        return urls;
-      },
-    });
-  } else if (token) {
-    console.log("  OpenClaw UI (tokenized URL; treat it like a password)");
-    for (const line of guidanceLines) {
-      console.log(`  ${line}`);
-    }
-    for (const entry of dashboardAccess) {
-      console.log(`  ${entry.label}: ${entry.url}`);
-    }
-  } else {
-    note("  Could not read gateway token from the sandbox (download failed).");
-    console.log("  OpenClaw UI");
-    for (const line of guidanceLines) {
-      console.log(`  ${line}`);
-    }
-    for (const entry of dashboardAccess) {
-      console.log(`  ${entry.label}: ${entry.url}`);
-    }
-    console.log(
-      `  Token:       nemoclaw ${sandboxName} connect  →  jq -r '.gateway.auth.token' /sandbox/.openclaw/openclaw.json`,
-    );
-    console.log(
-      `               append  #token=<token>  to the URL, or see /tmp/gateway.log inside the sandbox.`,
-    );
-  }
-  console.log(`  ${"─".repeat(50)}`);
-  console.log("");
+  return onboardDashboard.printDashboard(sandboxName, model, provider, nimContainer, agent, {
+    note, runOpenshell, runCapture,
+  });
 }
+const { getWslHostAddress, getDashboardForwardTarget } = onboardDashboard;
 
 function startRecordedStep(stepName, updates = {}) {
   onboardSession.markStepStarted(stepName);
