@@ -95,7 +95,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 SANDBOX_NAME="${NEMOCLAW_SANDBOX_NAME:-e2e-vm}"
 REGISTRY="$HOME/.nemoclaw/sandboxes.json"
-MIN_OPENSHELL="0.0.26"
+MIN_OPENSHELL="0.0.32"
 OPENSHELL_VM_VERSION="${OPENSHELL_VM_VERSION:-vm-dev}"
 MODEL="nvidia/nemotron-3-super-120b-a12b"
 

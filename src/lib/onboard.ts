@@ -2741,11 +2741,7 @@ async function startVmGatewayProcess({ exitOnFailure = true } = {}) {
     console.log(`  Using downloaded VM runtime: ${downloadedRuntime}`);
   }
 
-  // Ensure rootfs is extracted before booting so we can patch the init
-  // script. openshell-vm's embedded kernel has CONFIG_POSIX_MQUEUE=y but
-  // the init script doesn't mount the mqueue filesystem. runc needs
-  // /dev/mqueue to create container sandboxes — without it k3s pods fail
-  // with "error mounting mqueue: no such device".
+  // Extract the rootfs so we can patch the supervisor binary before boot.
   const prepResult = spawnSync("openshell-vm", ["--name", GATEWAY_NAME, "prepare-rootfs"], {
     cwd: ROOT,
     env: vmEnv,
@@ -2758,83 +2754,7 @@ async function startVmGatewayProcess({ exitOnFailure = true } = {}) {
     console.log(`  prepare-rootfs failed (exit ${prepResult.status}): ${prepErr.slice(0, 200)}`);
   }
   if (prepOutput) {
-    const rootfsDir = prepOutput;
-    console.log(`  Rootfs: ${rootfsDir}`);
-    const initScript = path.join(rootfsDir, "srv", "openshell-vm-init.sh");
-    // The vm-dev kernel (built 2026-04-09) predates CONFIG_POSIX_MQUEUE
-    // (added 2026-04-10, commit d8cf7951). runc fails mounting mqueue
-    // in container namespaces. k3s bundles its own runc in
-    // /var/lib/rancher/k3s/data/<hash>/bin/ — extracted at startup,
-    // so we can't pre-patch the binary. Instead, write a containerd
-    // config template that configures the runtime to use our wrapper.
-    //
-    // k3s reads /var/lib/rancher/k3s/agent/etc/containerd/config.toml.tmpl
-    // before generating its containerd config. We inject a [plugins]
-    // section that sets the runtime binary to our wrapper script.
-    const shimDir = path.join(rootfsDir, "opt", "nemoclaw");
-    fs.mkdirSync(shimDir, { recursive: true });
-
-    // The wrapper script: finds the k3s-bundled runc and calls it after
-    // stripping mqueue from config.json.
-    const shimPath = path.join(shimDir, "runc-shim");
-    fs.writeFileSync(shimPath, [
-      "#!/bin/sh",
-      "# runc shim: strip mqueue mounts for kernels without CONFIG_POSIX_MQUEUE",
-      "# Find the real k3s-bundled runc",
-      'REAL=$(find /var/lib/rancher/k3s/data -name runc -type f 2>/dev/null | head -1)',
-      '[ -z "$REAL" ] && REAL=/usr/bin/runc',
-      '# Replace mqueue with tmpfs in config.json (mqueue needs CONFIG_POSIX_MQUEUE)',
-      'for a in "$@"; do',
-      '  [ -f "$a/config.json" ] && sed -i \'s/"type": *"mqueue"/"type": "tmpfs"/g\' "$a/config.json" 2>/dev/null',
-      "done",
-      'exec "$REAL" "$@"',
-      "",
-    ].join("\n"));
-    fs.chmodSync(shimPath, 0o755);
-
-    // Patch init script: add mqueue test + containerd config template
-    if (fs.existsSync(initScript)) {
-      const initContent = fs.readFileSync(initScript, "utf-8");
-      if (!initContent.includes("nemoclaw-mqueue-fix")) {
-        const patchLines = [
-          "",
-          "# ── nemoclaw-mqueue-fix: work around missing CONFIG_POSIX_MQUEUE in vm-dev kernel ──",
-          "mkdir -p /tmp/_mqtest 2>/dev/null || true",
-          "if ! mount -t mqueue mqueue /tmp/_mqtest 2>/dev/null; then",
-          "  ts 'kernel lacks mqueue — configuring containerd to use runc shim'",
-          "  _tmpl_dir=/var/lib/rancher/k3s/agent/etc/containerd",
-          '  mkdir -p "$_tmpl_dir"',
-          '  cat > "$_tmpl_dir/config.toml.tmpl" << \'CTRD_TMPL\'',
-          "version = 2",
-          '[plugins."io.containerd.grpc.v1.cri".containerd.runtimes.runc]',
-          '  runtime_type = "io.containerd.runc.v2"',
-          '[plugins."io.containerd.grpc.v1.cri".containerd.runtimes.runc.options]',
-          '  BinaryName = "/opt/nemoclaw/runc-shim"',
-          "CTRD_TMPL",
-          "else",
-          "  umount /tmp/_mqtest 2>/dev/null || true",
-          "fi",
-          "rmdir /tmp/_mqtest 2>/dev/null || true",
-          "",
-        ].join("\n");
-        const patched = initContent.replace(
-          /^(K3S_ARGS=\()/m,
-          patchLines + "$1",
-        );
-        if (patched !== initContent) {
-          fs.writeFileSync(initScript, patched);
-          console.log("  Patched VM init: containerd runc shim for mqueue");
-        } else {
-          console.log("  Init script patch: K3S_ARGS insertion point not found");
-        }
-      } else {
-        console.log("  Init script already has mqueue fix");
-      }
-    } else {
-      console.log(`  Init script not found at: ${initScript}`);
-    }
-  } else {
-    console.log("  prepare-rootfs returned no output");
+    console.log(`  Rootfs: ${prepOutput}`);
   }
 
   // The vm-dev openshell-sandbox binary was built with cargo-zigbuild on
@@ -2846,7 +2766,7 @@ async function startVmGatewayProcess({ exitOnFailure = true } = {}) {
     const supervisorPath = path.join(prepOutput, "opt", "openshell", "bin", "openshell-sandbox");
     if (fs.existsSync(supervisorPath)) {
       const gatewayImage = `ghcr.io/nvidia/openshell/cluster:${
-        require("./openshell").getInstalledOpenshellVersion("openshell", { ignoreError: true }) || "0.0.26"
+        require("./openshell").getInstalledOpenshellVersion("openshell", { ignoreError: true }) || "0.0.32"
       }`;
       console.log(`  Checking supervisor glibc compatibility...`);
       // Extract openshell-sandbox from the Docker gateway image
