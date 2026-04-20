@@ -11,13 +11,12 @@
 
 const fs = require("fs");
 const path = require("path");
-const { execFileSync } = require("child_process");
 const { run } = require("./runner");
 const { buildPolicySetCommand } = require("./policies");
+const { lockAgentConfig } = require("./shields");
 
 const STATE_DIR = path.join(process.env.HOME ?? "/tmp", ".nemoclaw", "state");
 const AUDIT_FILE = path.join(STATE_DIR, "shields-audit.jsonl");
-const K3S_CONTAINER = "openshell-cluster-nemoclaw";
 
 const [sandboxName, snapshotPath, restoreAtIso, configPath, configDir] = process.argv.slice(2);
 const STATE_FILE = path.join(STATE_DIR, `shields-${sandboxName}.json`);
@@ -26,14 +25,6 @@ const delayMs = Math.max(0, restoreAtMs - Date.now());
 
 if (!sandboxName || !snapshotPath || !restoreAtIso || isNaN(restoreAtMs)) {
   process.exit(1);
-}
-
-function kubectlExec(cmd) {
-  execFileSync("docker", [
-    "exec", K3S_CONTAINER,
-    "kubectl", "exec", "-n", "openshell", sandboxName, "-c", "agent", "--",
-    ...cmd,
-  ], { stdio: ["ignore", "pipe", "pipe"], timeout: 15000 });
 }
 
 function appendAudit(entry) {
@@ -100,74 +91,22 @@ setTimeout(() => {
       process.exit(1);
     }
 
-    // Re-lock config file (each operation independent).
-    // See lockAgentConfig in shields.ts for the full rationale on chattr.
+    // Re-lock config file using the shared lockAgentConfig from shields.ts.
+    // lockAgentConfig runs each operation independently and verifies the
+    // on-disk state — it throws if verification fails.
     let lockVerified = true;
     if (configPath) {
-      const lockErrors = [];
-      try { kubectlExec(["chmod", "444", configPath]); } catch { lockErrors.push("chmod 444"); }
-      try { kubectlExec(["chown", "root:root", configPath]); } catch { lockErrors.push("chown file"); }
-      if (configDir) {
-        try { kubectlExec(["chmod", "755", configDir]); } catch { lockErrors.push("chmod dir"); }
-        try { kubectlExec(["chown", "root:root", configDir]); } catch { lockErrors.push("chown dir"); }
-      }
-      // Best-effort: config file was never chattr +i'd by entrypoint
-      let chattrSucceeded = true;
-      try { kubectlExec(["chattr", "+i", configPath]); } catch { chattrSucceeded = false; }
-
-      // Verify mode + ownership (mandatory). Immutable bit only if chattr worked.
-      const issues = [];
       try {
-        const perms = execFileSync("docker", [
-          "exec", K3S_CONTAINER,
-          "kubectl", "exec", "-n", "openshell", sandboxName, "-c", "agent", "--",
-          "stat", "-c", "%a %U:%G", configPath,
-        ], { stdio: ["ignore", "pipe", "pipe"], timeout: 15000 }).toString().trim();
-        const [mode, owner] = perms.split(" ");
-        if (!/^4[0-4][0-4]$/.test(mode)) issues.push(`file mode=${mode}`);
-        if (owner !== "root:root") issues.push(`file owner=${owner}`);
-      } catch {
-        issues.push("file stat failed");
-      }
-
-      if (configDir) {
-        try {
-          const dirPerms = execFileSync("docker", [
-            "exec", K3S_CONTAINER,
-            "kubectl", "exec", "-n", "openshell", sandboxName, "-c", "agent", "--",
-            "stat", "-c", "%a %U:%G", configDir,
-          ], { stdio: ["ignore", "pipe", "pipe"], timeout: 15000 }).toString().trim();
-          const [dirMode, dirOwner] = dirPerms.split(" ");
-          if (dirMode !== "755") issues.push(`dir mode=${dirMode}`);
-          if (dirOwner !== "root:root") issues.push(`dir owner=${dirOwner}`);
-        } catch {
-          issues.push("dir stat failed");
-        }
-      }
-
-      if (chattrSucceeded) {
-        try {
-          const attrs = execFileSync("docker", [
-            "exec", K3S_CONTAINER,
-            "kubectl", "exec", "-n", "openshell", sandboxName, "-c", "agent", "--",
-            "lsattr", "-d", configPath,
-          ], { stdio: ["ignore", "pipe", "pipe"], timeout: 15000 }).toString().trim();
-          const [flags] = attrs.split(/\s+/, 1);
-          if (!flags.includes("i")) issues.push("immutable bit not set");
-        } catch {
-          // lsattr may not be available — skip
-        }
-      }
-
-      if (issues.length > 0 || lockErrors.length > 0) {
-        lockVerified = issues.length === 0;
+        lockAgentConfig(sandboxName, { configPath, configDir });
+      } catch (lockErr) {
+        lockVerified = false;
         appendAudit({
           action: "shields_auto_restore_lock_warning",
           sandbox: sandboxName,
           timestamp: now,
           restored_by: "auto_timer",
-          warning: `Lock issues: ${[...lockErrors, ...issues].join(", ")}`,
-          lock_verified: lockVerified,
+          warning: lockErr?.message ?? String(lockErr),
+          lock_verified: false,
         });
       }
     }
@@ -190,6 +129,10 @@ setTimeout(() => {
         policy_snapshot: snapshotPath,
       });
     } else {
+      // Explicitly ensure state reflects shields are still DOWN.
+      // shieldsDown() already wrote shieldsDown: true, but be explicit
+      // rather than relying on the absence of an update.
+      updateState({ shieldsDown: true });
       appendAudit({
         action: "shields_up_failed",
         sandbox: sandboxName,

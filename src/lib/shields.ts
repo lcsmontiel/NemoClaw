@@ -235,6 +235,8 @@ function lockAgentConfig(sandboxName: string, target: { configPath: string; conf
   if (chattrSucceeded) {
     try {
       const attrs = kubectlExecCapture(sandboxName, ["lsattr", "-d", target.configPath]);
+      // lsattr format: "----i---------e----- /path/to/file"
+      // First whitespace-delimited token is the flags field.
       const [flags] = attrs.trim().split(/\s+/, 1);
       if (!flags.includes("i")) issues.push("immutable bit not set");
     } catch {
@@ -376,20 +378,32 @@ function shieldsDown(sandboxName: string, opts: ShieldsDownOpts = {}): void {
     const message = err instanceof Error ? err.message : String(err);
     console.error(`  Cannot start auto-restore timer: ${message}`);
     console.error("  Rolling back — restoring policy from snapshot...");
-    run(buildPolicySetCommand(snapshotPath, sandboxName), { ignoreError: true });
-    try {
-      lockAgentConfig(sandboxName, target);
-    } catch {
-      console.error("  Warning: Rollback re-lock could not be verified. Check config manually.");
+    const rollbackResult = run(buildPolicySetCommand(snapshotPath, sandboxName), { ignoreError: true });
+    let rollbackLocked = false;
+    if (rollbackResult.status === 0) {
+      try {
+        lockAgentConfig(sandboxName, target);
+        rollbackLocked = true;
+      } catch {
+        console.error("  Warning: Rollback re-lock could not be verified. Check config manually.");
+      }
+    } else {
+      console.error("  Warning: Policy restore failed during rollback.");
     }
-    saveShieldsState(sandboxName, {
-      shieldsDown: false,
-      shieldsDownAt: null,
-      shieldsDownTimeout: null,
-      shieldsDownReason: null,
-      shieldsDownPolicy: null,
-    });
-    console.error("  Shields restored to UP. The sandbox was never left unguarded.");
+    if (rollbackLocked) {
+      saveShieldsState(sandboxName, {
+        shieldsDown: false,
+        shieldsDownAt: null,
+        shieldsDownTimeout: null,
+        shieldsDownReason: null,
+        shieldsDownPolicy: null,
+      });
+      console.error("  Shields restored to UP. The sandbox was never left unguarded.");
+    } else {
+      // Leave state as shieldsDown: true — don't lie about protection level
+      console.error("  Shields remain DOWN — manual intervention required.");
+      console.error(`  Re-lock manually via kubectl exec, then run: nemoclaw ${sandboxName} shields up`);
+    }
     process.exit(1);
   }
 
@@ -640,6 +654,7 @@ export {
   shieldsStatus,
   isShieldsDown,
   parseDuration,
+  lockAgentConfig,
   MAX_TIMEOUT_SECONDS,
   DEFAULT_TIMEOUT_SECONDS,
 };
