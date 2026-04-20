@@ -520,20 +520,30 @@ else
   fail "Sandbox '$SANDBOX_NAME' status failed after resume"
 fi
 
-# Verify inference still works after resume
+# Verify inference still works after resume.
+# The inference route may take a few seconds to come back after the VM
+# gateway restarts, so retry up to 3 times with a short pause.
 if setup_ssh; then
   info "[LIVE] Post-resume inference test..."
-  # shellcheck disable=SC2029
-  resume_response=$($TIMEOUT_CMD ssh "${SSH_OPTS[@]}" "$SSH_TARGET" \
-    "curl -s --max-time 60 https://inference.local/v1/chat/completions \
-      -H 'Content-Type: application/json' \
-      -d '{\"model\":\"$MODEL\",\"messages\":[{\"role\":\"user\",\"content\":\"Reply with exactly one word: PONG\"}],\"max_tokens\":100}'" \
-    2>&1) || true
-
   resume_content=""
-  if [ -n "$resume_response" ]; then
-    resume_content=$(echo "$resume_response" | parse_chat_content 2>/dev/null) || true
-  fi
+  for _attempt in 1 2 3; do
+    # shellcheck disable=SC2029
+    resume_response=$($TIMEOUT_CMD ssh "${SSH_OPTS[@]}" "$SSH_TARGET" \
+      "curl -s --max-time 60 https://inference.local/v1/chat/completions \
+        -H 'Content-Type: application/json' \
+        -d '{\"model\":\"$MODEL\",\"messages\":[{\"role\":\"user\",\"content\":\"Reply with exactly one word: PONG\"}],\"max_tokens\":100}'" \
+      2>&1) || true
+
+    resume_content=""
+    if [ -n "$resume_response" ]; then
+      resume_content=$(echo "$resume_response" | parse_chat_content 2>/dev/null) || true
+    fi
+    if grep -qi "PONG" <<<"$resume_content"; then
+      break
+    fi
+    info "  Attempt $_attempt: inference not ready yet, retrying in 10s..."
+    sleep 10
+  done
 
   if grep -qi "PONG" <<<"$resume_content"; then
     pass "[LIVE] Post-resume: inference works through VM sandbox"
