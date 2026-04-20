@@ -2870,41 +2870,62 @@ async function startVmGatewayProcess({ exitOnFailure = true } = {}) {
   // --mem 4096: CI runners (16GB) can't spare the default 8GB while also
   // running k3s image pulls; 4GB is enough for a lightweight gateway.
   const vmArgs = ["--name", GATEWAY_NAME, "--mem", "4096"];
+  const maxAttempts = envInt("NEMOCLAW_VM_START_ATTEMPTS", 3);
 
-  const logFd = fs.openSync(VM_LOG_FILE, "a");
-  const child = spawn("openshell-vm", vmArgs, {
-    cwd: ROOT,
-    env: vmEnv,
-    stdio: ["ignore", logFd, logFd],
-    detached: true,
-  });
-  child.unref();
-  fs.closeSync(logFd);
-
-  writeVmPidFile(child.pid);
-
-  // openshell-vm boots k3s inside a microVM and runs its own bootstrap
-  // (PKI generation, helm install, health check). This takes significantly
-  // longer than Docker gateway start — up to ~120s on first boot.
-  // The binary itself polls gRPC health for 90s internally, so our outer
-  // poll should exceed that to avoid racing against the inner check.
-  const healthPollCount = envInt("NEMOCLAW_HEALTH_POLL_COUNT", 60);
-  const healthPollInterval = envInt("NEMOCLAW_HEALTH_POLL_INTERVAL", 3);
-  for (let i = 0; i < healthPollCount; i++) {
-    if (!isVmProcessAlive(child.pid)) {
-      break; // Process died
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    if (attempt > 1) {
+      console.log(`  Retrying VM gateway (attempt ${attempt}/${maxAttempts})...`);
+      stopVmGateway();
     }
-    if (isVmGatewayHealthy()) {
+
+    const logFd = fs.openSync(VM_LOG_FILE, "a");
+    const child = spawn("openshell-vm", vmArgs, {
+      cwd: ROOT,
+      env: vmEnv,
+      stdio: ["ignore", logFd, logFd],
+      detached: true,
+    });
+    child.unref();
+    fs.closeSync(logFd);
+
+    writeVmPidFile(child.pid);
+
+    // openshell-vm boots k3s inside a microVM and runs its own bootstrap
+    // (PKI generation, helm install, health check). This takes significantly
+    // longer than Docker gateway start — up to ~120s on first boot.
+    // The binary itself polls gRPC health for 90s internally, so our outer
+    // poll should exceed that to avoid racing against the inner check.
+    const healthPollCount = envInt("NEMOCLAW_HEALTH_POLL_COUNT", 60);
+    const healthPollInterval = envInt("NEMOCLAW_HEALTH_POLL_INTERVAL", 3);
+    let healthy = false;
+    for (let i = 0; i < healthPollCount; i++) {
+      if (!isVmProcessAlive(child.pid)) {
+        console.log("  VM process died during boot");
+        break;
+      }
+      if (isVmGatewayHealthy()) {
+        healthy = true;
+        break;
+      }
+      if (i < healthPollCount - 1) sleep(healthPollInterval);
+    }
+
+    if (healthy) {
       console.log("  ✓ VM gateway is healthy");
       process.env.OPENSHELL_GATEWAY = VM_GATEWAY_NAME;
       return;
     }
-    if (i < healthPollCount - 1) sleep(healthPollInterval);
+
+    // Log tail for diagnostics before retrying
+    try {
+      const tail = fs.readFileSync(VM_LOG_FILE, "utf-8").split("\n").slice(-5).join("\n");
+      if (tail.trim()) console.log("  Log tail:\n" + tail);
+    } catch { /* best effort */ }
   }
 
-  // Failed — show tail of log for diagnostics
+  // All attempts exhausted
   if (exitOnFailure) {
-    console.error("  VM gateway failed to start.");
+    console.error(`  VM gateway failed to start after ${maxAttempts} attempts.`);
     console.error("  Check logs: " + VM_LOG_FILE);
     try {
       const tail = fs.readFileSync(VM_LOG_FILE, "utf-8").split("\n").slice(-10).join("\n");
