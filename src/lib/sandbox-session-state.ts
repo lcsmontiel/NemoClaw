@@ -88,36 +88,45 @@ export function parseForwardList(output: string): ForwardEntry[] {
 }
 
 /**
- * Parse `pgrep -a ssh` output to find SSH processes targeting a specific sandbox.
+ * Parse process list output to find SSH processes targeting a specific sandbox.
  *
  * SSH connections to sandboxes use the host pattern `openshell-<sandboxName>`.
- * We look for command lines containing this target host.
+ * We match the full SSH host as a complete word to avoid false positives when
+ * one sandbox name is a prefix of another (e.g., `dev` vs `dev-staging`).
  *
- * pgrep -a output format: one line per match — `<PID> <full command line>`
+ * Input format: one line per process — `<PID> <full command line>`
+ * (compatible with both `pgrep -a` on Linux and `ps -axo pid,command`)
  */
 export function parseSshProcesses(pgrepOutput: string, sandboxName: string): SandboxSession[] {
   if (!pgrepOutput || typeof pgrepOutput !== "string") return [];
   if (!sandboxName) return [];
 
   const sshHost = `openshell-${sandboxName}`;
+  // Match sshHost as a complete word — preceded by whitespace/start and followed
+  // by whitespace/end. This prevents `openshell-dev` from matching inside
+  // `openshell-dev-staging`.
+  const hostPattern = new RegExp(`(?:^|\\s)${escapeRegExp(sshHost)}(?:\\s|$)`);
   const sessions: SandboxSession[] = [];
   const lines = pgrepOutput.split("\n").filter(Boolean);
 
   for (const line of lines) {
-    const pidMatch = line.match(/^(\d+)\s+(.+)/);
+    const pidMatch = line.match(/^\s*(\d+)\s+(.+)/);
     if (!pidMatch) continue;
 
     const pid = Number.parseInt(pidMatch[1], 10);
     const cmdline = pidMatch[2];
 
-    // Match SSH processes targeting this sandbox's SSH host.
-    // The command line should contain the openshell-<name> host identifier.
-    if (cmdline.includes(sshHost)) {
+    if (hostPattern.test(cmdline)) {
       sessions.push({ sandboxName, pid, sshHost });
     }
   }
 
   return sessions;
+}
+
+/** Escape special regex characters in a string for safe use in RegExp. */
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 /**
@@ -137,6 +146,18 @@ export function getForwardsForSandbox(entries: ForwardEntry[], sandboxName: stri
   return entries.filter((e) => e.sandboxName === sandboxName);
 }
 
+/** Classification result from combining forward and SSH session evidence. */
+export interface SessionClassification {
+  /** Whether interactive SSH sessions are active (authoritative indicator). */
+  hasActiveSessions: boolean;
+  /** Number of active SSH sessions. */
+  sessionCount: number;
+  /** Number of running port forwards for this sandbox. */
+  forwardCount: number;
+  /** Which detection sources contributed evidence (e.g., ["forward", "ssh"]). */
+  sources: string[];
+}
+
 /**
  * Determine whether there are active SSH sessions for a sandbox from both
  * forward list and process detection.
@@ -150,7 +171,7 @@ export function classifySessionState(
   forwardEntries: ForwardEntry[],
   sshSessions: SandboxSession[],
   sandboxName: string,
-): { hasActiveSessions: boolean; sessionCount: number; sources: string[] } {
+): SessionClassification {
   const sources: string[] = [];
 
   const activeForwards = getForwardsForSandbox(forwardEntries, sandboxName).filter(
@@ -170,7 +191,7 @@ export function classifySessionState(
   const sessionCount = matchingSessions.length;
   const hasActiveSessions = sessionCount > 0;
 
-  return { hasActiveSessions, sessionCount, sources };
+  return { hasActiveSessions, sessionCount, forwardCount: activeForwards.length, sources };
 }
 
 // ---------------------------------------------------------------------------
@@ -189,6 +210,12 @@ export interface SessionDetectionDeps {
  *
  * This is the high-level entry point used by consumers (destroy, rebuild, etc.).
  * It invokes system commands through the deps interface for testability.
+ *
+ * Detection relies on `pgrep -a ssh` to find SSH processes targeting the
+ * sandbox's SSH host. The `getForwardList` dep is not used here (forward
+ * activity alone doesn't indicate interactive sessions — the dashboard
+ * forward is always running). Consumers that need forward state can call
+ * `parseForwardList` + `classifySessionState` directly.
  */
 export function getActiveSandboxSessions(
   sandboxName: string,
@@ -198,15 +225,13 @@ export function getActiveSandboxSessions(
     return { detected: false, sessions: [] };
   }
 
-  const forwardOutput = deps.getForwardList();
   const pgrepOutput = deps.getSshProcesses();
 
-  // If neither source is available, we can't detect sessions
-  if (forwardOutput === null && pgrepOutput === null) {
+  if (pgrepOutput === null) {
     return { detected: false, sessions: [] };
   }
 
-  const sshSessions = parseSshProcesses(pgrepOutput ?? "", sandboxName);
+  const sshSessions = parseSshProcesses(pgrepOutput, sandboxName);
 
   return {
     detected: true,
@@ -215,8 +240,34 @@ export function getActiveSandboxSessions(
 }
 
 /**
+ * Query SSH processes using `ps` (portable across macOS and Linux).
+ *
+ * `pgrep -a` on macOS only prints PIDs (no command line), making it useless
+ * for matching SSH target hosts. `ps -axo pid,command` works on both platforms
+ * and returns full command lines in pgrep-compatible format (`PID COMMAND`).
+ */
+function querySshProcesses(): string | null {
+  try {
+    const result = spawnSync("ps", ["-axo", "pid,command"], {
+      encoding: "utf-8",
+      stdio: ["ignore", "pipe", "pipe"],
+      timeout: 5000,
+    });
+    if (result.status !== 0) return null;
+    // Filter to only SSH lines to reduce noise and match pgrep -a output format
+    const lines = (result.stdout || "")
+      .split("\n")
+      .filter((line) => /\bssh\b/.test(line))
+      .join("\n");
+    return lines;
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Create the default system deps for session detection.
- * Uses `openshell forward list` and `pgrep -a ssh` on the host.
+ * Uses `openshell forward list` and `ps` (cross-platform) on the host.
  */
 export function createSystemDeps(openshellBinary: string): SessionDetectionDeps {
   return {
@@ -233,19 +284,6 @@ export function createSystemDeps(openshellBinary: string): SessionDetectionDeps 
         return null;
       }
     },
-    getSshProcesses: (): string | null => {
-      try {
-        const result = spawnSync("pgrep", ["-a", "ssh"], {
-          encoding: "utf-8",
-          stdio: ["ignore", "pipe", "pipe"],
-          timeout: 5000,
-        });
-        // pgrep returns exit 1 when no matches — that's valid (no SSH sessions)
-        if (result.status !== 0 && result.status !== 1) return null;
-        return result.stdout || "";
-      } catch {
-        return null;
-      }
-    },
+    getSshProcesses: querySshProcesses,
   };
 }

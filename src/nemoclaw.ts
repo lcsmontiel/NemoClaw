@@ -135,18 +135,6 @@ function captureOpenshell(args, opts = {}) {
 }
 
 function cleanupGatewayAfterLastSandbox() {
-  // Warn if active sessions exist on any sandbox still using this gateway.
-  // This path runs automatically after the last sandbox is destroyed, so we
-  // log but don't block (the sandbox is already gone at this point).
-  const opsBinCleanup = resolveOpenshell();
-  if (opsBinCleanup) {
-    const deps = createSessionDeps(opsBinCleanup);
-    const fwdCheck = deps.getForwardList();
-    if (fwdCheck && /running/i.test(fwdCheck)) {
-      console.log(`  ${D}Note: Tearing down gateway with active port forwards.${R}`);
-    }
-  }
-
   runOpenshell(["forward", "stop", DASHBOARD_FORWARD_PORT], { ignoreError: true });
   runOpenshell(["gateway", "destroy", "-g", NEMOCLAW_GATEWAY_NAME], { ignoreError: true });
   run(
@@ -1787,29 +1775,27 @@ function cleanupSandboxServices(sandboxName, { stopHostServices = false } = {}) 
 async function sandboxDestroy(sandboxName, args = []) {
   const skipConfirm = args.includes("--yes") || args.includes("--force");
 
-  // Active session guard — warn before destroying a sandbox with live SSH connections
+  // Active session detection — enrich the confirmation prompt if sessions are active
+  let activeSessionCount = 0;
   const opsBin = resolveOpenshell();
   if (opsBin) {
-    const sessionResult = getActiveSandboxSessions(sandboxName, createSessionDeps(opsBin));
-    if (sessionResult.detected && sessionResult.sessions.length > 0) {
-      const count = sessionResult.sessions.length;
-      const plural = count > 1 ? "sessions" : "session";
-      console.log("");
-      console.log(`  ${YW}⚠  Active SSH ${plural} detected for '${sandboxName}' (${count} connection${count > 1 ? "s" : ""})${R}`);
-      console.log(`  Destroying this sandbox will terminate ${count === 1 ? "the" : "all"} active ${plural} with a Broken pipe error.`);
-      console.log("");
-      if (!skipConfirm) {
-        const answer = await askPrompt("  Destroy anyway? [y/N]: ");
-        if (answer.trim().toLowerCase() !== "y" && answer.trim().toLowerCase() !== "yes") {
-          console.log("  Cancelled.");
-          return;
-        }
+    try {
+      const sessionResult = getActiveSandboxSessions(sandboxName, createSessionDeps(opsBin));
+      if (sessionResult.detected) {
+        activeSessionCount = sessionResult.sessions.length;
       }
+    } catch {
+      /* non-fatal */
     }
   }
 
   if (!skipConfirm) {
     console.log(`  ${YW}Destroy sandbox '${sandboxName}'?${R}`);
+    if (activeSessionCount > 0) {
+      const plural = activeSessionCount > 1 ? "sessions" : "session";
+      console.log(`  ${YW}⚠  Active SSH ${plural} detected (${activeSessionCount} connection${activeSessionCount > 1 ? "s" : ""})${R}`);
+      console.log(`  Destroying will terminate ${activeSessionCount === 1 ? "the" : "all"} active ${plural} with a Broken pipe error.`);
+    }
     console.log("  This will permanently delete the sandbox and all workspace files inside it.");
     console.log("  This cannot be undone.");
     const answer = await askPrompt("  Type 'yes' to confirm, or press Enter to cancel [y/N]: ");
@@ -1889,24 +1875,17 @@ async function sandboxRebuild(sandboxName, args = [], opts = {}) {
       }
     : (_msg, code = 1) => process.exit(code);
 
-  // Active session guard — warn before rebuilding a sandbox with live SSH connections
+  // Active session detection — enrich the confirmation prompt if sessions are active
+  let rebuildActiveSessionCount = 0;
   const opsBinRebuild = resolveOpenshell();
   if (opsBinRebuild) {
-    const sessionResult = getActiveSandboxSessions(sandboxName, createSessionDeps(opsBinRebuild));
-    if (sessionResult.detected && sessionResult.sessions.length > 0) {
-      const count = sessionResult.sessions.length;
-      const plural = count > 1 ? "sessions" : "session";
-      console.log("");
-      console.log(`  ${YW}⚠  Active SSH ${plural} detected for '${sandboxName}' (${count} connection${count > 1 ? "s" : ""})${R}`);
-      console.log(`  Rebuilding this sandbox will terminate ${count === 1 ? "the" : "all"} active ${plural} with a Broken pipe error.`);
-      console.log("");
-      if (!skipConfirm) {
-        const answer = await askPrompt("  Rebuild anyway? [y/N]: ");
-        if (answer.trim().toLowerCase() !== "y" && answer.trim().toLowerCase() !== "yes") {
-          console.log("  Cancelled.");
-          return;
-        }
+    try {
+      const sessionResult = getActiveSandboxSessions(sandboxName, createSessionDeps(opsBinRebuild));
+      if (sessionResult.detected) {
+        rebuildActiveSessionCount = sessionResult.sessions.length;
       }
+    } catch {
+      /* non-fatal */
     }
   }
 
@@ -1941,6 +1920,12 @@ async function sandboxRebuild(sandboxName, args = [], opts = {}) {
   console.log("");
 
   if (!skipConfirm) {
+    if (rebuildActiveSessionCount > 0) {
+      const plural = rebuildActiveSessionCount > 1 ? "sessions" : "session";
+      console.log(`  ${YW}⚠  Active SSH ${plural} detected (${rebuildActiveSessionCount} connection${rebuildActiveSessionCount > 1 ? "s" : ""})${R}`);
+      console.log(`  Rebuilding will terminate ${rebuildActiveSessionCount === 1 ? "the" : "all"} active ${plural} with a Broken pipe error.`);
+      console.log("");
+    }
     console.log("  This will:");
     console.log("    1. Back up workspace state");
     console.log("    2. Destroy and recreate the sandbox with the current image");

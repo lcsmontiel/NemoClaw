@@ -10,6 +10,7 @@ import {
   classifySessionState,
   getActiveSandboxSessions,
   type ForwardEntry,
+  type SessionClassification,
   type SessionDetectionDeps,
 } from "./sandbox-session-state";
 
@@ -110,10 +111,21 @@ describe("parseSshProcesses", () => {
     // openshell-my-sandbox-extended should NOT match openshell-my-sandbox
     const output = `100 ssh -F /tmp/cfg openshell-my-sandbox-extended`;
     const sessions = parseSshProcesses(output, "my-sandbox");
-    // The current implementation does substring match — this is intentional:
-    // `openshell-my-sandbox` is a substring of `openshell-my-sandbox-extended`.
-    // In practice, sandbox names are unique and don't overlap as prefixes.
-    // If this becomes an issue, we can add word-boundary matching later.
+    // Word-boundary matching ensures `openshell-my-sandbox` does not match
+    // inside `openshell-my-sandbox-extended`.
+    expect(sessions).toHaveLength(0);
+  });
+
+  it("matches sandbox name at end of line", () => {
+    const output = `100 ssh -F /tmp/cfg openshell-my-sandbox`;
+    const sessions = parseSshProcesses(output, "my-sandbox");
+    expect(sessions).toHaveLength(1);
+    expect(sessions[0].pid).toBe(100);
+  });
+
+  it("matches sandbox name followed by whitespace", () => {
+    const output = `100 ssh -F /tmp/cfg -o StrictHostKeyChecking=no openshell-dev -t bash`;
+    const sessions = parseSshProcesses(output, "dev");
     expect(sessions).toHaveLength(1);
   });
 });
@@ -162,6 +174,7 @@ describe("classifySessionState", () => {
     const result = classifySessionState(forwards, sessions, "dev");
     expect(result.hasActiveSessions).toBe(true);
     expect(result.sessionCount).toBe(1);
+    expect(result.forwardCount).toBe(0);
     expect(result.sources).toContain("ssh");
   });
 
@@ -172,6 +185,7 @@ describe("classifySessionState", () => {
     const sessions: { sandboxName: string; pid: number; sshHost: string }[] = [];
     const result = classifySessionState(forwards, sessions, "dev");
     expect(result.hasActiveSessions).toBe(false);
+    expect(result.forwardCount).toBe(1);
     expect(result.sources).toContain("forward");
     expect(result.sources).not.toContain("ssh");
   });
@@ -184,6 +198,7 @@ describe("classifySessionState", () => {
     const result = classifySessionState(forwards, sessions, "dev");
     expect(result.hasActiveSessions).toBe(true);
     expect(result.sessionCount).toBe(1);
+    expect(result.forwardCount).toBe(1);
     expect(result.sources).toContain("forward");
     expect(result.sources).toContain("ssh");
   });
@@ -194,6 +209,7 @@ describe("classifySessionState", () => {
     const result = classifySessionState(forwards, sessions, "dev");
     expect(result.hasActiveSessions).toBe(false);
     expect(result.sessionCount).toBe(0);
+    expect(result.forwardCount).toBe(0);
   });
 
   it("counts multiple sessions", () => {
@@ -205,6 +221,7 @@ describe("classifySessionState", () => {
     const result = classifySessionState(forwards, sessions, "dev");
     expect(result.hasActiveSessions).toBe(true);
     expect(result.sessionCount).toBe(2);
+    expect(result.forwardCount).toBe(0);
   });
 });
 
@@ -239,15 +256,16 @@ describe("getActiveSandboxSessions", () => {
     expect(result.sessions[0].pid).toBe(12345);
   });
 
-  it("works with forward list only (no pgrep)", () => {
+  it("returns detected=false when pgrep unavailable (forward list alone insufficient)", () => {
     const deps: SessionDetectionDeps = {
       getForwardList: () =>
         "SANDBOX  BIND  PORT  PID  STATUS\nmy-sandbox  127.0.0.1  18789  999  running\n",
       getSshProcesses: () => null,
     };
     const result = getActiveSandboxSessions("my-sandbox", deps);
-    expect(result.detected).toBe(true);
-    // Forward-only doesn't produce sessions (need SSH process)
+    // SSH process detection is the authoritative source; forward list alone
+    // cannot determine interactive sessions (dashboard forward always runs).
+    expect(result.detected).toBe(false);
     expect(result.sessions).toEqual([]);
   });
 
