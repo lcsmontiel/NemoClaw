@@ -21,9 +21,7 @@ describe("image cleanup: sandbox destroy removes Docker image (#2086)", () => {
 
   it("sandboxDestroy calls removeSandboxImage before registry.removeSandbox", () => {
     // Extract the sandboxDestroy function body
-    const destroyMatch = nemoclawSrc.match(
-      /async function sandboxDestroy[\s\S]*?^}/m,
-    );
+    const destroyMatch = nemoclawSrc.match(/async function sandboxDestroy[\s\S]*?^}/m);
     expect(destroyMatch).toBeTruthy();
     const destroyBody = destroyMatch[0];
 
@@ -37,7 +35,7 @@ describe("image cleanup: sandbox destroy removes Docker image (#2086)", () => {
 
   it("sandboxRebuild calls removeSandboxImage before registry.removeSandbox", () => {
     const rebuildMatch = nemoclawSrc.match(
-      /async function sandboxRebuild[\s\S]*?^  console\.log\(`\s*\$\{G\}.*Sandbox.*rebuilt/m,
+      /async function sandboxRebuild[\s\S]*?^\s*console\.log\(`\s*\$\{G\}.*Sandbox.*rebuilt/m,
     );
     expect(rebuildMatch).toBeTruthy();
     const rebuildBody = rebuildMatch[0];
@@ -51,9 +49,7 @@ describe("image cleanup: sandbox destroy removes Docker image (#2086)", () => {
 
   it("removeSandboxImage gracefully handles missing imageTag", () => {
     // The function should check for imageTag before attempting removal
-    const fnMatch = nemoclawSrc.match(
-      /function removeSandboxImage[\s\S]*?^}/m,
-    );
+    const fnMatch = nemoclawSrc.match(/function removeSandboxImage[\s\S]*?^}/m);
     expect(fnMatch).toBeTruthy();
     expect(fnMatch[0]).toContain("imageTag");
   });
@@ -73,8 +69,8 @@ describe("image cleanup: onboard records imageTag in registry (#2086)", () => {
 
   it("onboard recreate path cleans up old image", () => {
     // When recreating, the old image should be removed
-    expect(onboardSrc).toMatch(/oldEntry\?\.imageTag/);
-    expect(onboardSrc).toMatch(/docker.*rmi.*oldEntry\.imageTag/);
+    expect(onboardSrc).toMatch(/previousEntry\?\.imageTag/);
+    expect(onboardSrc).toMatch(/docker.*rmi.*previousEntry\.imageTag/);
   });
 });
 
@@ -87,9 +83,7 @@ describe("image cleanup: registry stores imageTag (#2086)", () => {
 
   it("registerSandbox persists imageTag", () => {
     // The registerSandbox function should include imageTag in the stored entry
-    const registerMatch = registrySrc.match(
-      /function registerSandbox[\s\S]*?^}/m,
-    );
+    const registerMatch = registrySrc.match(/function registerSandbox[\s\S]*?^}/m);
     expect(registerMatch).toBeTruthy();
     expect(registerMatch[0]).toContain("imageTag");
   });
@@ -110,9 +104,7 @@ describe("image cleanup: gc command exists (#2086)", () => {
   });
 
   it("garbageCollectImages lists sandbox-from images and cross-references registry", () => {
-    const gcMatch = nemoclawSrc.match(
-      /async function garbageCollectImages[\s\S]*?^}/m,
-    );
+    const gcMatch = nemoclawSrc.match(/async function garbageCollectImages[\s\S]*?^}/m);
     expect(gcMatch).toBeTruthy();
     const gcBody = gcMatch[0];
 

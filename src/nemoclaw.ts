@@ -1981,11 +1981,9 @@ function cleanupSandboxServices(sandboxName, { stopHostServices = false } = {}) 
 function removeSandboxImage(sandboxName) {
   const sb = registry.getSandbox(sandboxName);
   if (!sb?.imageTag) return;
-  try {
-    run(["docker", "rmi", sb.imageTag], { ignoreError: true });
+  const result = run(["docker", "rmi", sb.imageTag], { ignoreError: true });
+  if (result.status === 0) {
     console.log(`  Removed Docker image ${sb.imageTag}`);
-  } catch {
-    // Image may already be gone or in use — ignore.
   }
 }
 

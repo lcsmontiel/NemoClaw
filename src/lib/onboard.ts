@@ -3399,10 +3399,9 @@ async function createSandbox(
     note(`  Deleting and recreating sandbox '${sandboxName}'...`);
 
     // Destroy old sandbox and clean up its host-side Docker image.
-    const oldEntry = registry.getSandbox(sandboxName);
     runOpenshell(["sandbox", "delete", sandboxName], { ignoreError: true });
-    if (oldEntry?.imageTag) {
-      run(["docker", "rmi", oldEntry.imageTag], { ignoreError: true });
+    if (previousEntry?.imageTag) {
+      run(["docker", "rmi", previousEntry.imageTag], { ignoreError: true });
     }
     registry.removeSandbox(sandboxName);
   }
