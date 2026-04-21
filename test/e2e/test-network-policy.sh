@@ -266,7 +266,7 @@ test_net_02_whitelist_access() {
 test_net_03_live_policy_add() {
   log "=== TC-NET-03: Live Policy-Add Without Restart ==="
 
-  local target_url="https://api.telegram.org/"
+  local target_url="https://api.telegram.org/bot000000000:fake/getMe"
 
   log "  Step 1: Verify api.telegram.org is blocked before policy-add..."
   local before
@@ -277,7 +277,7 @@ fetch('$target_url', {signal: AbortSignal.timeout(15000)})
 \"" 2>&1) || true
   log "  Before policy-add: $before"
 
-  if echo "$before" | grep -qE "STATUS_[23]"; then
+  if echo "$before" | grep -qE "STATUS_[24]" && ! echo "$before" | grep -qE "STATUS_403"; then
     skip "TC-NET-03" "api.telegram.org already reachable before policy-add (preset may be pre-applied)"
     return
   fi
@@ -299,7 +299,7 @@ fetch('$target_url', {signal: AbortSignal.timeout(30000)})
 \"" 2>&1) || true
   log "  After policy-add: $after"
 
-  if echo "$after" | grep -qE "STATUS_2"; then
+  if echo "$after" | grep -qE "STATUS_[24]" && ! echo "$after" | grep -qE "STATUS_403"; then
     pass "TC-NET-03: Endpoint reachable after live policy-add ($after)"
   elif echo "$after" | grep -qE "STATUS_403"; then
     fail "TC-NET-03: Live policy-add" "api.telegram.org still blocked with 403 after policy-add"
