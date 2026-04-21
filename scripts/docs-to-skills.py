@@ -824,6 +824,12 @@ def build_skill_description(name: str, pages: list[DocPage]) -> str:
         lead_desc += " Includes references: " + ", ".join(ref_files) + "."
 
     if len(lead_desc) > 1024:
+        print(
+            f"  warning: description for skill '{name}' truncated from "
+            f"{len(lead_desc)} to 1023 characters; consider shortening the "
+            f"lead page's description.agent or trimming the references list",
+            file=sys.stderr,
+        )
         lead_desc = lead_desc[:1020] + "..."
     return lead_desc
 
