@@ -713,6 +713,10 @@ To override the model, set <code class="docutils literal notranslate"><span clas
 </div>
 <p>Select <strong>Local NVIDIA NIM [experimental]</strong> from the provider list.
 NemoClaw filters available models by GPU VRAM, pulls the NIM container image, starts it, and waits for it to become healthy before continuing.</p>
+<p>NIM container images are hosted on <code class="docutils literal notranslate"><span class="pre">nvcr.io</span></code> and require NGC registry authentication before <code class="docutils literal notranslate"><span class="pre">docker</span> <span class="pre">pull</span></code> succeeds.
+If Docker is not already logged in to <code class="docutils literal notranslate"><span class="pre">nvcr.io</span></code>, onboard prompts for an <a class="reference external" href="https://org.ngc.nvidia.com/setup/api-key" rel="noreferer noopener" target="_blank">NGC API key</a> and runs <code class="docutils literal notranslate"><span class="pre">docker</span> <span class="pre">login</span> <span class="pre">nvcr.io</span></code> over <code class="docutils literal notranslate"><span class="pre">--password-stdin</span></code> so the key is never written to disk or shell history.
+The prompt masks the key during input and retries once on a bad key before failing.
+In non-interactive mode, onboard exits with login instructions if Docker is not already authenticated; run <code class="docutils literal notranslate"><span class="pre">docker</span> <span class="pre">login</span> <span class="pre">nvcr.io</span></code> yourself, then re-run <code class="docutils literal notranslate"><span class="pre">nemoclaw</span> <span class="pre">onboard</span> <span class="pre">--non-interactive</span></code>.</p>
 <div class="admonition note">
 <p class="admonition-title">Note</p>
 <p>NIM uses vLLM internally.

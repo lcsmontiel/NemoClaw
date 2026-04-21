@@ -558,7 +558,9 @@ Changes made only inside the sandbox are also ephemeral and are lost when the sa
 <section id="create-a-policy-file">
 <h3>Create a Policy File<a class="headerlink" href="#create-a-policy-file" title="Link to this heading">#</a></h3>
 <p>Create a YAML file with the endpoints to add.
-Follow the same format as the baseline policy in <code class="docutils literal notranslate"><span class="pre">nemoclaw-blueprint/policies/openclaw-sandbox.yaml</span></code>.</p>
+Follow the same format as the baseline policy in <code class="docutils literal notranslate"><span class="pre">nemoclaw-blueprint/policies/openclaw-sandbox.yaml</span></code>.
+Add a top-level <code class="docutils literal notranslate"><span class="pre">version</span></code> field (for example, <code class="docutils literal notranslate"><span class="pre">version:</span> <span class="pre">1</span></code>).
+OpenShell rejects policy YAML that omits this field.</p>
 </section>
 <section id="apply-the-policy">
 <h3>Apply the Policy<a class="headerlink" href="#apply-the-policy" title="Link to this heading">#</a></h3>
@@ -633,11 +635,38 @@ You can add or remove individual presets in the interactive preset screen that f
 </tbody>
 </table>
 </div>
-<p>To apply a preset to a running sandbox, pass it as a policy file:</p>
-<div class="highlight-console notranslate"><div class="highlight"><pre><span></span><span class="gp">$ </span>openshell<span class="w"> </span>policy<span class="w"> </span><span class="nb">set</span><span class="w"> </span>--policy<span class="w"> </span>nemoclaw-blueprint/policies/presets/pypi.yaml<span class="w"> </span>my-assistant
+<p>To apply a preset to a running sandbox:</p>
+<div class="highlight-console notranslate"><div class="highlight"><pre><span></span><span class="gp">$ </span>nemoclaw<span class="w"> </span>&lt;name&gt;<span class="w"> </span>policy-add
+</pre></div>
+</div>
+<div class="admonition note">
+<p class="admonition-title">Note</p>
+<p>Preset selection is interactive.
+Positional preset arguments are ignored.</p>
+</div>
+<p>For example, to interactively add PyPI access to a running sandbox:</p>
+<div class="highlight-console notranslate"><div class="highlight"><pre><span></span><span class="gp">$ </span>nemoclaw<span class="w"> </span>my-assistant<span class="w"> </span>policy-add
+</pre></div>
+</div>
+<p>To list which presets are applied to a sandbox:</p>
+<div class="highlight-console notranslate"><div class="highlight"><pre><span></span><span class="gp">$ </span>nemoclaw<span class="w"> </span>&lt;name&gt;<span class="w"> </span>policy-list
 </pre></div>
 </div>
 <p>To include a preset in the baseline, merge its entries into <code class="docutils literal notranslate"><span class="pre">openclaw-sandbox.yaml</span></code> and re-run <code class="docutils literal notranslate"><span class="pre">nemoclaw</span> <span class="pre">onboard</span></code>.</p>
+<div class="admonition note">
+<p class="admonition-title">Note</p>
+<p>The <code class="docutils literal notranslate"><span class="pre">openshell</span> <span class="pre">policy</span> <span class="pre">set</span> <span class="pre">--policy</span> <span class="pre">&lt;file&gt;</span> <span class="pre">&lt;sandbox-name&gt;</span></code> command operates on raw policy files and does not
+accept the <code class="docutils literal notranslate"><span class="pre">preset:</span></code> metadata block used in preset YAML files. Use <code class="docutils literal notranslate"><span class="pre">nemoclaw</span> <span class="pre">&lt;name&gt;</span> <span class="pre">policy-add</span></code> for
+presets.</p>
+</div>
+<p>For scripted workflows, <code class="docutils literal notranslate"><span class="pre">policy-add</span></code> and <code class="docutils literal notranslate"><span class="pre">policy-remove</span></code> accept the preset name as a positional argument:</p>
+<div class="highlight-console notranslate"><div class="highlight"><pre><span></span><span class="gp">$ </span>nemoclaw<span class="w"> </span>my-assistant<span class="w"> </span>policy-add<span class="w"> </span>pypi<span class="w"> </span>--yes
+<span class="gp">$ </span>nemoclaw<span class="w"> </span>my-assistant<span class="w"> </span>policy-remove<span class="w"> </span>pypi<span class="w"> </span>--yes
+</pre></div>
+</div>
+<p>Set <code class="docutils literal notranslate"><span class="pre">NEMOCLAW_NON_INTERACTIVE=1</span></code> instead of <code class="docutils literal notranslate"><span class="pre">--yes</span></code> to drive the same flow from an environment variable.
+See <a class="reference internal" href="../reference/commands.html#nemoclaw-name-policy-add"><span class="std std-ref">Commands</span></a> for the full flag reference.</p>
+<p><code class="docutils literal notranslate"><span class="pre">nemoclaw</span> <span class="pre">&lt;name&gt;</span> <span class="pre">rebuild</span></code> reapplies every policy preset to the recreated sandbox, so presets survive an agent-version upgrade without manual reapplication.</p>
 </section>
 <section id="related-topics">
 <h2>Related Topics<a class="headerlink" href="#related-topics" title="Link to this heading">#</a></h2>
