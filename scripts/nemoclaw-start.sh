@@ -461,6 +461,10 @@ ${marker_end}"
       printf '\n%s\n' "$snippet" >>"$rc_file"
     fi
   done
+  # Lock rc files read-only so Landlock enforcement holds
+  for rc_file in "${_SANDBOX_HOME}/.bashrc" "${_SANDBOX_HOME}/.profile"; do
+    [ -f "$rc_file" ] && chmod 444 "$rc_file"
+  done
 }
 
 install_configure_guard() {
@@ -533,6 +537,9 @@ GUARD
     elif [ -w "$rc_file" ] || [ -w "$(dirname "$rc_file")" ]; then
       printf '\n%s\n' "$snippet" >>"$rc_file"
     fi
+  done
+  for rc_file in "${_SANDBOX_HOME}/.bashrc" "${_SANDBOX_HOME}/.profile"; do
+    [ -f "$rc_file" ] && chmod 444 "$rc_file"
   done
 }
 
