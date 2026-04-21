@@ -8,6 +8,11 @@ description: "Explains how to run NemoClaw on a remote GPU instance, including t
 
 # Deploy NemoClaw to a Remote GPU Instance with Brev
 
+## Gotchas
+
+- The `nemoclaw deploy` command is deprecated.
+- On Brev, set `CHAT_UI_URL` in the launchable environment configuration so it is available when the installer builds the sandbox image.
+
 ## Prerequisites
 
 - The [Brev CLI](https://brev.nvidia.com) installed and authenticated.
@@ -203,9 +208,7 @@ $ nemoclaw start
 
 ## References
 
-Load these files from `references/` when you need the full details:
-
-- [references/sandbox-hardening.md](references/sandbox-hardening.md) — Includes the sandbox container image hardening reference, covering Docker capabilities and process limits
+- **[references/sandbox-hardening.md](references/sandbox-hardening.md)** — Includes the sandbox container image hardening reference, covering Docker capabilities and process limits.
 
 ## Related Skills
 

@@ -8,6 +8,10 @@ description: "Installs NemoClaw, launches a sandbox, and runs the first agent pr
 
 # NemoClaw Quickstart: Install, Launch, and Run Your First Agent
 
+## Gotchas
+
+- **OpenShell lifecycle.** For NemoClaw-managed environments, use `nemoclaw onboard` when you need to create or recreate the OpenShell gateway or sandbox.
+
 ## Prerequisites
 
 Before getting started, check the prerequisites to ensure you have the necessary software and hardware to run NemoClaw.
@@ -90,9 +94,7 @@ For troubleshooting installation or onboarding issues, see the Troubleshooting g
 
 ## References
 
-Load these files from `references/` when you need the full details:
-
-- [references/windows-setup.md](references/windows-setup.md) — Includes Windows-only prerequisites that must be completed before the Quickstart
+- **[references/windows-setup.md](references/windows-setup.md)** — Includes Windows-only prerequisites that must be completed before the Quickstart.
 
 ## Related Skills
 

@@ -542,16 +542,88 @@ def extract_related_skills(text: str) -> tuple[str, list[str]]:
     return cleaned, entries
 
 
-def _short_ref_summary(page: DocPage) -> str:
-    """Return a short summary to annotate a reference bullet.
+def _split_description_trigger(desc: str) -> tuple[str, str]:
+    """Split a page description into (covers, trigger) halves.
 
-    Uses ``description.agent`` from the page frontmatter (already loaded
-    into ``page.description`` when present, see ``parse_doc``). Falls back
-    to the plain ``description`` when ``description.agent`` is not set.
-    Returns an empty string when the page has no description at all —
-    callers should still emit the bullet so the reference file is linked.
+    Doc frontmatter tends to phrase ``description.agent`` as
+    ``"<what it covers>. Use when <trigger>."`` (or ``"Use for ..."``).
+    Splitting on that marker lets the References section lead each
+    bullet with the *when* so the agent sees the activation trigger
+    before the descriptive text — the pattern the skill-creation
+    best-practices guide recommends for progressive disclosure.
+
+    Returns ``(covers, trigger)`` where ``trigger`` starts with
+    ``"when "`` or ``"for "`` (no leading ``"Use "``), or an empty
+    string when no marker is found. Trailing periods are stripped from
+    both halves so callers can add punctuation as needed.
     """
-    return (page.description or "").strip().rstrip(".")
+    text = (desc or "").strip()
+    if not text:
+        return "", ""
+
+    lowest_idx = -1
+    for marker in (". Use when ", ". Use for "):
+        idx = text.find(marker)
+        if idx != -1 and (lowest_idx == -1 or idx < lowest_idx):
+            lowest_idx = idx
+    if lowest_idx == -1:
+        return text.rstrip("."), ""
+
+    covers = text[:lowest_idx].strip().rstrip(".")
+    # Len of ". Use " is 6; keep the "when ..." / "for ..." tail.
+    trigger = text[lowest_idx + 6 :].strip().rstrip(".")
+    return covers, trigger
+
+
+_WARNING_BLOCK_RE = re.compile(
+    r":::\{warning\}(?:[ \t]+([^\n]+))?\n(.*?)\n:::",
+    re.DOTALL,
+)
+
+
+def _extract_gotchas(pages: list[DocPage]) -> list[str]:
+    """Pull ``:::{warning}`` admonitions out of the source pages.
+
+    Returns a list of markdown bullets suitable for a top-level
+    ``## Gotchas`` section. The admonition stays in place inline, but
+    surfacing its first sentence up front means the agent sees the
+    correction before it picks a path through the steps — per the
+    best-practices guide, gotchas are highest-value when they live
+    above the procedures they correct.
+
+    Uses the admonition's inline title when present; otherwise leads
+    with the first sentence of the body. Deduplicates across pages so
+    repeated warnings collapse to one bullet.
+    """
+    bullets: list[str] = []
+    seen: set[str] = set()
+    for page in pages:
+        for m in _WARNING_BLOCK_RE.finditer(page.body):
+            title = (m.group(1) or "").strip().rstrip(".!?")
+            body = m.group(2).strip()
+            # Strip any directive metadata lines such as ``:class: ...``
+            body_lines = [
+                ln
+                for ln in body.split("\n")
+                if not re.match(r"^\s*:[a-z_-]+:", ln)
+            ]
+            body = "\n".join(body_lines).strip()
+            if not body:
+                continue
+            first = re.split(r"(?<=[.!?])\s+", body, maxsplit=1)[0].strip()
+            # Collapse intra-sentence whitespace — source docs wrap at ~80
+            # chars, so without this the bullet breaks across lines.
+            first = re.sub(r"\s+", " ", first)
+            if title:
+                bullet = f"- **{title}.** {first}"
+            else:
+                bullet = f"- {first}"
+            key = bullet.lower()
+            if key in seen:
+                continue
+            seen.add(key)
+            bullets.append(bullet)
+    return bullets
 
 
 def _safe_truncation_point(lines: list[str], target: int) -> int:
@@ -997,6 +1069,18 @@ def generate_skill(
     lines.append(f"# {skill_title}")
     lines.append("")
 
+    # Gotchas — surface :::{warning} admonitions from the source procedure
+    # pages at the top so the agent sees non-obvious corrections before it
+    # commits to a path through the steps. The warnings stay in place
+    # inline; this section is a directed summary, not a replacement.
+    gotchas = _extract_gotchas(procedures)
+    if gotchas:
+        lines.append("## Gotchas")
+        lines.append("")
+        for g in gotchas:
+            lines.append(g)
+        lines.append("")
+
     # Prerequisites (merged from all procedure pages, deduplicated)
     prereq_items: list[str] = []
     seen_prereqs: set[str] = set()
@@ -1079,26 +1163,28 @@ def generate_skill(
             merged_entries.append(entry)
 
     # References section — point at the full concept/reference files that
-    # ship alongside SKILL.md. The agent loads these on demand, so SKILL.md
-    # stays small and nothing is truncated mid-table or mid-code-fence.
+    # ship alongside SKILL.md. Each bullet leads with the activation
+    # trigger from description.agent (the "Use when ..." clause) so the
+    # agent can decide on-sight whether to load the file, which is how
+    # progressive disclosure is supposed to work.
     ref_section_pages = context_pages + reference_pages
     if ref_section_pages:
         lines.append("")
         lines.append("## References")
         lines.append("")
-        lines.append(
-            "Load these files from `references/` when you need the full details:"
-        )
-        lines.append("")
         for rp in ref_section_pages:
             ref_name = rp.path.stem + ".md"
-            summary_text = _short_ref_summary(rp)
-            if summary_text:
-                lines.append(
-                    f"- [references/{ref_name}](references/{ref_name}) — {summary_text}"
-                )
+            file_link = f"[references/{ref_name}](references/{ref_name})"
+            covers, trigger = _split_description_trigger(rp.description or "")
+            if trigger:
+                bullet = f"- **Load {file_link}** {trigger}."
+                if covers:
+                    bullet += f" {covers}."
+            elif covers:
+                bullet = f"- **{file_link}** — {covers}."
             else:
-                lines.append(f"- [references/{ref_name}](references/{ref_name})")
+                bullet = f"- {file_link}"
+            lines.append(bullet)
 
     if merged_entries:
         lines.append("")

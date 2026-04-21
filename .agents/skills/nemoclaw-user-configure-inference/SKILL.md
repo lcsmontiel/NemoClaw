@@ -428,9 +428,7 @@ If the provider itself needs to change (for example, switching from vLLM to a cl
 
 ## References
 
-Load these files from `references/` when you need the full details:
-
-- [references/inference-options.md](references/inference-options.md) — Lists all inference providers offered during NemoClaw onboarding. Use when explaining which providers are available, what the onboard wizard presents, or how inference routing works
+- **Load [references/inference-options.md](references/inference-options.md)** when explaining which providers are available, what the onboard wizard presents, or how inference routing works. Lists all inference providers offered during NemoClaw onboarding.
 
 ## Related Skills
 

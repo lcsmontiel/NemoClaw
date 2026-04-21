@@ -10,8 +10,6 @@ description: "Presents a risk framework for every configurable security control 
 
 ## References
 
-Load these files from `references/` when you need the full details:
-
-- [references/best-practices.md](references/best-practices.md) — Presents a risk framework for every configurable security control in NemoClaw. Use when evaluating security posture, reviewing sandbox security defaults, or assessing control trade-offs
-- [references/openclaw-controls.md](references/openclaw-controls.md) — Lists OpenClaw security controls that operate independently of NemoClaw, including prompt injection detection, tool access control, rate limiting, environment variable policy, audit framework, supply chain scanning, messaging access policy, context visibility, and safe regex. Use when reviewing the security boundary between NemoClaw and OpenClaw or assessing what NemoClaw does not cover
-- [references/credential-storage.md](references/credential-storage.md) — Covers where NemoClaw stores provider credentials, the file permissions applied, and the trade-offs of plaintext local storage
+- **Load [references/best-practices.md](references/best-practices.md)** when evaluating security posture, reviewing sandbox security defaults, or assessing control trade-offs. Presents a risk framework for every configurable security control in NemoClaw.
+- **Load [references/openclaw-controls.md](references/openclaw-controls.md)** when reviewing the security boundary between NemoClaw and OpenClaw or assessing what NemoClaw does not cover. Lists OpenClaw security controls that operate independently of NemoClaw, including prompt injection detection, tool access control, rate limiting, environment variable policy, audit framework, supply chain scanning, messaging access policy, context visibility, and safe regex.
+- **[references/credential-storage.md](references/credential-storage.md)** — Covers where NemoClaw stores provider credentials, the file permissions applied, and the trade-offs of plaintext local storage.

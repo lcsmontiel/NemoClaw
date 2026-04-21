@@ -10,9 +10,7 @@ description: "Explains how OpenClaw, OpenShell, and NemoClaw form the ecosystem,
 
 ## References
 
-Load these files from `references/` when you need the full details:
-
-- [references/ecosystem.md](references/ecosystem.md) — Explains how OpenClaw, OpenShell, and NemoClaw form the ecosystem, NemoClaw's position in the stack, what NemoClaw adds beyond the community sandbox, and when to prefer NemoClaw versus integrating OpenShell and OpenClaw directly. Use when users ask about the relationship between OpenClaw, OpenShell, and NemoClaw, or when to use NemoClaw versus OpenShell
-- [references/how-it-works.md](references/how-it-works.md) — Describes how NemoClaw works internally: CLI, plugin, blueprint runner, OpenShell orchestration, inference routing, and protection layers. Use for sandbox lifecycle and architecture mechanics; not for product definition (Overview) or multi-project placement (Ecosystem)
-- [references/overview.md](references/overview.md) — Explains what NemoClaw covers: onboarding, lifecycle management, and OpenClaw operations within OpenShell containers, plus capabilities and why it exists. Use when users ask what NemoClaw is or what the project provides. For ecosystem placement or OpenShell-only paths, use the Ecosystem page; for internal mechanics, use How It Works
-- [references/release-notes.md](references/release-notes.md) — Includes the NemoClaw release notes
+- **Load [references/ecosystem.md](references/ecosystem.md)** when users ask about the relationship between OpenClaw, OpenShell, and NemoClaw, or when to use NemoClaw versus OpenShell. Explains how OpenClaw, OpenShell, and NemoClaw form the ecosystem, NemoClaw's position in the stack, what NemoClaw adds beyond the community sandbox, and when to prefer NemoClaw versus integrating OpenShell and OpenClaw directly.
+- **Load [references/how-it-works.md](references/how-it-works.md)** for sandbox lifecycle and architecture mechanics; not for product definition (Overview) or multi-project placement (Ecosystem). Describes how NemoClaw works internally: CLI, plugin, blueprint runner, OpenShell orchestration, inference routing, and protection layers.
+- **Load [references/overview.md](references/overview.md)** when users ask what NemoClaw is or what the project provides. For ecosystem placement or OpenShell-only paths, use the Ecosystem page; for internal mechanics, use How It Works. Explains what NemoClaw covers: onboarding, lifecycle management, and OpenClaw operations within OpenShell containers, plus capabilities and why it exists.
+- **[references/release-notes.md](references/release-notes.md)** — Includes the NemoClaw release notes.

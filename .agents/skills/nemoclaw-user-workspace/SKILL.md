@@ -114,9 +114,7 @@ memory/
 
 ## References
 
-Load these files from `references/` when you need the full details:
-
-- [references/workspace-files.md](references/workspace-files.md) — What workspace personality and configuration files are, where they live, and how they persist across sandbox restarts
+- **[references/workspace-files.md](references/workspace-files.md)** — What workspace personality and configuration files are, where they live, and how they persist across sandbox restarts.
 
 ## Related Skills
 
