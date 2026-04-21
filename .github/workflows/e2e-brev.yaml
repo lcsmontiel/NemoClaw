@@ -239,10 +239,10 @@ jobs:
               'set +e
                mkdir -p /tmp/nc-debug
                cp /tmp/nemoclaw-onboard.log /tmp/nc-debug/ 2>/dev/null || true
-               openshell sandbox list  > /tmp/nc-debug/sandbox-list.txt 2>&1
-               openshell gateway status > /tmp/nc-debug/gateway-status.txt 2>&1
-               docker ps -a             > /tmp/nc-debug/docker-ps.txt 2>&1
-               tar -C /tmp -czf /tmp/nc-debug.tar.gz nc-debug
+               timeout 15s openshell sandbox list  > /tmp/nc-debug/sandbox-list.txt 2>&1
+               timeout 15s openshell gateway status > /tmp/nc-debug/gateway-status.txt 2>&1
+               timeout 15s docker ps -a             > /tmp/nc-debug/docker-ps.txt 2>&1
+               timeout 30s tar -C /tmp -czf /tmp/nc-debug.tar.gz nc-debug
               ' || true
           scp -o StrictHostKeyChecking=no -o LogLevel=ERROR \
               "${INSTANCE}:/tmp/nc-debug.tar.gz" brev-debug-bundle/ 2>/dev/null || true
