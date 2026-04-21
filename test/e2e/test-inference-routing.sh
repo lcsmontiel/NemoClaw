@@ -30,24 +30,23 @@
 set -euo pipefail
 
 # ── Overall timeout ──────────────────────────────────────────────────────────
-if [ -z "${NEMOCLAW_E2E_NO_TIMEOUT:-}" ]; then
-  export NEMOCLAW_E2E_NO_TIMEOUT=1
-  TIMEOUT_SECONDS="${NEMOCLAW_E2E_TIMEOUT_SECONDS:-1200}"
-  if command -v gtimeout >/dev/null 2>&1; then
-    exec gtimeout -s TERM "$TIMEOUT_SECONDS" bash "$0" "$@"
-  elif command -v timeout >/dev/null 2>&1; then
-    exec timeout -s TERM "$TIMEOUT_SECONDS" bash "$0" "$@"
-  fi
+TIMEOUT_CMD=""
+if command -v timeout >/dev/null 2>&1; then
+  TIMEOUT_CMD="timeout"
+elif command -v gtimeout >/dev/null 2>&1; then
+  TIMEOUT_CMD="gtimeout"
 fi
 
-# macOS uses gtimeout (from coreutils); Linux uses timeout
-if command -v gtimeout &>/dev/null; then
-  TIMEOUT_CMD="gtimeout"
-elif command -v timeout &>/dev/null; then
-  TIMEOUT_CMD="timeout"
-else
-  echo "ERROR: Neither timeout nor gtimeout found. Install coreutils: brew install coreutils"
-  exit 1
+if [ "${NEMOCLAW_E2E_NO_TIMEOUT:-0}" != "1" ]; then
+  TIMEOUT_SECONDS="${NEMOCLAW_E2E_TIMEOUT_SECONDS:-1200}"
+  if [ -n "$TIMEOUT_CMD" ]; then
+    export NEMOCLAW_E2E_NO_TIMEOUT=1
+    exec "$TIMEOUT_CMD" -s TERM "$TIMEOUT_SECONDS" "$0" "$@"
+  else
+    echo "ERROR: 'timeout' not found. Install coreutils (macOS: 'brew install coreutils')" >&2
+    echo "       or bypass with NEMOCLAW_E2E_NO_TIMEOUT=1" >&2
+    exit 127
+  fi
 fi
 
 RED='\033[0;31m'

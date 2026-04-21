@@ -22,18 +22,22 @@
 
 set -uo pipefail
 
-if [ "${NEMOCLAW_E2E_NO_TIMEOUT:-0}" != "1" ]; then
-  TIMEOUT_SECONDS="${TIMEOUT_SECONDS:-600}"
-  TIMEOUT_BIN=""
-  if command -v timeout >/dev/null 2>&1; then
-    TIMEOUT_BIN="timeout"
-  elif command -v gtimeout >/dev/null 2>&1; then
-    TIMEOUT_BIN="gtimeout"
-  fi
+TIMEOUT_CMD=""
+if command -v timeout >/dev/null 2>&1; then
+  TIMEOUT_CMD="timeout"
+elif command -v gtimeout >/dev/null 2>&1; then
+  TIMEOUT_CMD="gtimeout"
+fi
 
-  if [ -n "$TIMEOUT_BIN" ]; then
+if [ "${NEMOCLAW_E2E_NO_TIMEOUT:-0}" != "1" ]; then
+  TIMEOUT_SECONDS="${NEMOCLAW_E2E_TIMEOUT_SECONDS:-600}"
+  if [ -n "$TIMEOUT_CMD" ]; then
     export NEMOCLAW_E2E_NO_TIMEOUT=1
-    exec "$TIMEOUT_BIN" -s TERM "$TIMEOUT_SECONDS" "$0" "$@"
+    exec "$TIMEOUT_CMD" -s TERM "$TIMEOUT_SECONDS" "$0" "$@"
+  else
+    echo "ERROR: 'timeout' not found. Install coreutils (macOS: 'brew install coreutils')" >&2
+    echo "       or bypass with NEMOCLAW_E2E_NO_TIMEOUT=1" >&2
+    exit 127
   fi
 fi
 
