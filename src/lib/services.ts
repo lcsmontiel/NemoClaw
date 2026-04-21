@@ -103,7 +103,7 @@ function removePid(pidDir: string, name: string): void {
 // Service lifecycle
 // ---------------------------------------------------------------------------
 
-const SERVICE_NAMES = ["cloudflared"] as const;
+const SERVICE_NAMES = ["irc-bridge", "cloudflared"] as const;
 type ServiceName = (typeof SERVICE_NAMES)[number];
 
 function startService(
@@ -244,18 +244,40 @@ export function stopAll(opts: ServiceOptions = {}): void {
   const pidDir = resolvePidDir(opts);
   ensurePidDir(pidDir);
   stopService(pidDir, "cloudflared");
+  stopService(pidDir, "irc-bridge");
   info("All services stopped.");
 }
 
 export async function startAll(opts: ServiceOptions = {}): Promise<void> {
   const pidDir = resolvePidDir(opts);
   const dashboardPort = opts.dashboardPort ?? DASHBOARD_PORT;
+  // Compiled location: dist/lib/services.js → repo root is 2 levels up
+  const repoDir = opts.repoDir ?? join(__dirname, "..", "..");
 
   ensurePidDir(pidDir);
 
-  // Messaging (Telegram, Discord, Slack) is now handled natively by OpenClaw
+  // Messaging (Telegram, Discord, Slack) is handled natively by OpenClaw
   // inside the sandbox via the OpenShell provider/placeholder/L7-proxy pipeline.
-  // No host-side bridge processes are needed. See: PR #1081.
+  // IRC has no native channel and remains a host-side bridge.
+
+  let ircSkipReason = "";
+  if (!process.env.IRC_SERVER) {
+    ircSkipReason = "no IRC_SERVER";
+    warn("IRC_SERVER not set — IRC bridge will not start.");
+    warn("Set IRC_SERVER, IRC_NICK, and IRC_CHANNELS to enable.");
+  } else if (!process.env.NVIDIA_API_KEY) {
+    ircSkipReason = "no NVIDIA_API_KEY";
+    warn("NVIDIA_API_KEY not set — IRC bridge will not start.");
+  }
+
+  // IRC bridge (only if server + API key are configured)
+  if (process.env.IRC_SERVER && process.env.NVIDIA_API_KEY) {
+    const sandboxName =
+      opts.sandboxName ?? process.env.NEMOCLAW_SANDBOX ?? process.env.SANDBOX_NAME ?? "default";
+    startService(pidDir, "irc-bridge", "node", [join(repoDir, "scripts", "irc-bridge.js")], {
+      SANDBOX_NAME: sandboxName,
+    });
+  }
 
   // cloudflared tunnel
   try {
@@ -309,6 +331,13 @@ export async function startAll(opts: ServiceOptions = {}): Promise<void> {
   }
 
   console.log("  │  Messaging:   via OpenClaw native channels (if configured) │");
+
+  if (isRunning(pidDir, "irc-bridge")) {
+    console.log("  │  IRC:         bridge running                        │");
+  } else {
+    const reason = ircSkipReason || "not running";
+    console.log(`  │  IRC:         ${reason.padEnd(39)}│`);
+  }
 
   console.log("  │                                                     │");
   console.log("  │  Run 'openshell term' to monitor egress approvals   │");

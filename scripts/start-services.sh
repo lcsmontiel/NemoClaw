@@ -2,14 +2,16 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
-# Start NemoClaw auxiliary services: cloudflared tunnel for public access.
+# Start NemoClaw auxiliary services: IRC bridge and cloudflared tunnel
+# for public access.
 #
-# Messaging channels (Telegram, Discord, Slack) are now handled natively
-# by OpenClaw inside the sandbox — no host-side bridges needed.
+# Messaging channels (Telegram, Discord, Slack) are handled natively
+# by OpenClaw inside the sandbox — no host-side bridges needed for those.
+# IRC has no native channel and remains a host-side bridge.
 # See: nemoclaw-start.sh configure_messaging_channels()
 #
 # Usage:
-#   ./scripts/start-services.sh                     # start all
+#   IRC_SERVER=... ./scripts/start-services.sh       # start all
 #   ./scripts/start-services.sh --status             # check status
 #   ./scripts/start-services.sh --stop               # stop all
 #   ./scripts/start-services.sh --sandbox mybox      # start for specific sandbox
@@ -97,11 +99,13 @@ stop_service() {
 show_status() {
   mkdir -p "$PIDDIR"
   echo ""
-  if is_running cloudflared; then
-    echo -e "  ${GREEN}●${NC} cloudflared  (PID $(cat "$PIDDIR/cloudflared.pid"))"
-  else
-    echo -e "  ${RED}●${NC} cloudflared  (stopped)"
-  fi
+  for svc in irc-bridge cloudflared; do
+    if is_running "$svc"; then
+      echo -e "  ${GREEN}●${NC} $svc  (PID $(cat "$PIDDIR/$svc.pid"))"
+    else
+      echo -e "  ${RED}●${NC} $svc  (stopped)"
+    fi
+  done
   echo ""
 
   if [ -f "$PIDDIR/cloudflared.log" ]; then
@@ -116,11 +120,31 @@ show_status() {
 do_stop() {
   mkdir -p "$PIDDIR"
   stop_service cloudflared
+  stop_service irc-bridge
   info "All services stopped."
 }
 
 do_start() {
   mkdir -p "$PIDDIR"
+
+  if [ -z "${IRC_SERVER:-}" ]; then
+    warn "IRC_SERVER not set — IRC bridge will not start."
+    warn "Set IRC_SERVER, IRC_NICK, and IRC_CHANNELS to enable."
+  fi
+
+  if [ -z "${NVIDIA_API_KEY:-}" ]; then
+    warn "NVIDIA_API_KEY not set — IRC bridge requires it for inference."
+  fi
+
+  command -v node >/dev/null || fail "node not found. Install Node.js first."
+
+  REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+
+  # IRC bridge (only if server and API key are configured)
+  if [ -n "${IRC_SERVER:-}" ] && [ -n "${NVIDIA_API_KEY:-}" ]; then
+    SANDBOX_NAME="$SANDBOX_NAME" start_service irc-bridge \
+      node "$REPO_DIR/scripts/irc-bridge.js"
+  fi
 
   # cloudflared tunnel
   if command -v cloudflared >/dev/null 2>&1; then
@@ -159,6 +183,13 @@ do_start() {
   fi
 
   echo "  │  Messaging:   via OpenClaw native channels (if configured) │"
+
+  if is_running irc-bridge; then
+    echo "  │  IRC:         bridge running                        │"
+  else
+    echo "  │  IRC:         not started (no server)               │"
+  fi
+
   echo "  │                                                     │"
   echo "  │  Run 'openshell term' to monitor egress approvals   │"
   echo "  └─────────────────────────────────────────────────────┘"

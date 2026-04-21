@@ -26,16 +26,17 @@ describe("getServiceStatuses", () => {
 
   it("returns stopped status when no PID files exist", () => {
     const statuses = getServiceStatuses({ pidDir });
-    expect(statuses).toHaveLength(1);
+    expect(statuses).toHaveLength(2);
     for (const s of statuses) {
       expect(s.running).toBe(false);
       expect(s.pid).toBeNull();
     }
   });
 
-  it("returns service name cloudflared", () => {
+  it("returns all registered service names", () => {
     const statuses = getServiceStatuses({ pidDir });
     const names = statuses.map((s) => s.name);
+    expect(names).toContain("irc-bridge");
     expect(names).toContain("cloudflared");
   });
 
@@ -61,7 +62,7 @@ describe("getServiceStatuses", () => {
     const nested = join(pidDir, "nested", "deep");
     const statuses = getServiceStatuses({ pidDir: nested });
     expect(existsSync(nested)).toBe(true);
-    expect(statuses).toHaveLength(1);
+    expect(statuses).toHaveLength(2);
   });
 });
 
@@ -98,6 +99,7 @@ describe("showStatus", () => {
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
     showStatus({ pidDir });
     const output = logSpy.mock.calls.map((c) => c[0]).join("\n");
+    expect(output).toContain("irc-bridge");
     expect(output).toContain("cloudflared");
     expect(output).toContain("stopped");
     logSpy.mockRestore();
