@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { Command, type Config, Flags } from "@oclif/core";
+import { Command, Config as OclifConfig, type Config, Flags } from "@oclif/core";
 
 import {
   getSandboxInventory,
@@ -33,7 +33,15 @@ export interface ListCommandClass {
   run(argv?: string[], opts?: string): Promise<unknown>;
 }
 
-export function createListCommand(deps: RunListCommandDeps): ListCommandClass {
+function resolveListCommandDeps(
+  depsOrProvider: RunListCommandDeps | (() => RunListCommandDeps),
+): RunListCommandDeps {
+  return typeof depsOrProvider === "function" ? depsOrProvider() : depsOrProvider;
+}
+
+export function createListCommand(
+  depsOrProvider: RunListCommandDeps | (() => RunListCommandDeps),
+): ListCommandClass {
   return class ListCommand extends Command {
     static strict = true;
     static enableJsonFlag = true;
@@ -46,12 +54,14 @@ export function createListCommand(deps: RunListCommandDeps): ListCommandClass {
     };
 
     protected logJson(json: unknown): void {
+      const deps = resolveListCommandDeps(depsOrProvider);
       const log = deps.log ?? console.log;
       log(JSON.stringify(json, null, 2));
     }
 
     public async run(): Promise<unknown> {
       const { flags } = await this.parse(ListCommand);
+      const deps = resolveListCommandDeps(depsOrProvider);
       const log = deps.log ?? console.log;
 
       if (flags.help) {
@@ -78,6 +88,26 @@ export async function runListCommand(args: string[], deps: RunListCommandDeps): 
     if (isListParseError(error)) {
       const errorLine = deps.error ?? console.error;
       const exit = deps.exit ?? ((code: number) => process.exit(code));
+      errorLine(`  Unknown argument(s) for list: ${args.join(", ")}`);
+      printListUsage(errorLine);
+      exit(1);
+    }
+    throw error;
+  }
+}
+
+export async function runRegisteredListCommand(
+  args: string[],
+  opts: Pick<RunListCommandDeps, "rootDir" | "error" | "exit">,
+): Promise<void> {
+  const config = await OclifConfig.load(opts.rootDir);
+
+  try {
+    await config.runCommand("list", args);
+  } catch (error) {
+    if (isListParseError(error)) {
+      const errorLine = opts.error ?? console.error;
+      const exit = opts.exit ?? ((code: number) => process.exit(code));
       errorLine(`  Unknown argument(s) for list: ${args.join(", ")}`);
       printListUsage(errorLine);
       exit(1);

@@ -59,7 +59,8 @@ const {
   versionGte,
 } = require("./lib/openshell");
 const { showStatusCommand } = require("./lib/inventory-commands");
-const { runListCommand } = require("./lib/list-command");
+const { runRegisteredListCommand } = require("./lib/list-command");
+const { setListCommandDepsProvider } = require("./lib/list-command-runtime");
 const { executeDeploy } = require("./lib/deploy");
 const { runStartCommand, runStopCommand } = require("./lib/services-command");
 const { buildVersionedUninstallUrl, runUninstallCommand } = require("./lib/uninstall-command");
@@ -1211,8 +1212,14 @@ function buildListCommandDeps() {
   };
 }
 
+setListCommandDepsProvider(buildListCommandDeps);
+
 async function listSandboxes(args = []) {
-  await runListCommand(args, buildListCommandDeps());
+  await runRegisteredListCommand(args, {
+    rootDir: ROOT,
+    error: console.error,
+    exit: (code) => process.exit(code),
+  });
 }
 
 // ── Sandbox-scoped actions ───────────────────────────────────────

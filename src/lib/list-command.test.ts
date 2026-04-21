@@ -1,9 +1,21 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { createRequire } from "node:module";
+
 import { describe, expect, it, vi } from "vitest";
 
-import { createListCommand, runListCommand } from "./list-command";
+import {
+  createListCommand,
+  runListCommand,
+  runRegisteredListCommand,
+} from "./list-command";
+import {
+  clearListCommandDepsProvider,
+  setListCommandDepsProvider,
+} from "./list-command-runtime";
+
+const require = createRequire(import.meta.url);
 
 function makeExit(): (code: number) => never {
   return ((code: number) => {
@@ -120,6 +132,39 @@ describe("list command", () => {
       defaultSandbox: "beta",
       sandboxes: [{ name: "beta" }],
     });
+  });
+
+  it("runs the registered list command through the explicit oclif map", async () => {
+    const lines: string[] = [];
+    const distRuntime = require("../../dist/lib/list-command-runtime.js") as {
+      setListCommandDepsProvider: (provider: () => Record<string, unknown>) => void;
+      clearListCommandDepsProvider: () => void;
+    };
+    const provider = () => ({
+      rootDir: process.cwd(),
+      recoverRegistryEntries: async () => ({ sandboxes: [], defaultSandbox: null }),
+      getLiveInference: () => null,
+      loadLastSession: () => null,
+      log: (message = "") => lines.push(message),
+      error: vi.fn(),
+      exit: makeExit(),
+    });
+
+    setListCommandDepsProvider(provider);
+    distRuntime.setListCommandDepsProvider(provider);
+
+    try {
+      await runRegisteredListCommand(["--help"], {
+        rootDir: process.cwd(),
+        error: vi.fn(),
+        exit: makeExit(),
+      });
+    } finally {
+      clearListCommandDepsProvider();
+      distRuntime.clearListCommandDepsProvider();
+    }
+
+    expect(lines).toEqual(["  Usage: nemoclaw list [--json]", ""]);
   });
 
   it("converts oclif parse errors into list-specific usage output", async () => {
