@@ -242,6 +242,13 @@ cd "$NEMOCLAW_CLONE_DIR"
 npm install --ignore-scripts 2>&1 | tail -3
 info "Root deps installed"
 
+# --ignore-scripts above skips the `prepare` lifecycle which normally
+# builds dist/ (via `build:cli`). Build it explicitly — bin/nemoclaw.js
+# does `require("../dist/nemoclaw")` and needs the compiled output.
+info "Building CLI (dist/)..."
+npm run build:cli 2>&1 | tail -3
+info "CLI built"
+
 info "Building TypeScript plugin..."
 cd "$NEMOCLAW_CLONE_DIR/nemoclaw"
 npm install 2>&1 | tail -3

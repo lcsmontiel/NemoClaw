@@ -412,6 +412,22 @@ function bootstrapLaunchable(elapsed) {
     return { remoteDir: resolvedRemoteDir, needsOnboard: false };
   }
 
+  // Rebuild CLI dist/ for our branch. The rsync above excludes dist/, so
+  // without this step bin/nemoclaw.js would `require("../dist/nemoclaw")`
+  // against the launchable's main-branch build and crash with
+  // MODULE_NOT_FOUND if main differs from the PR branch. `npm install
+  // --ignore-scripts` skipped the `prepare` lifecycle that normally runs
+  // `build:cli`, so do it explicitly.
+  console.log(`[${elapsed()}] Building CLI (dist/) for PR branch...`);
+  ssh(
+    `source ~/.nvm/nvm.sh 2>/dev/null || true && cd ${resolvedRemoteDir} && npm run build:cli`,
+    {
+      timeout: 120_000,
+      stream: true,
+    },
+  );
+  console.log(`[${elapsed()}] CLI built`);
+
   // Rebuild TS plugin for our branch (reinstall plugin deps in case they changed)
   console.log(`[${elapsed()}] Building TypeScript plugin...`);
   ssh(
