@@ -61,23 +61,21 @@ export function checkStaleDist(
   return { srcMtime, distMtime };
 }
 
-/** Print a stale-dist warning to `stream` if dist/ is out of date. Returns true when a warning was emitted, false otherwise. Never throws — fails open on I/O errors. */
+/** Print a stale-dist warning to `stream` if dist/ is out of date. Returns true when a warning was emitted, false otherwise. Never throws — fails open on any error (filesystem or stream write). */
 export function warnIfStale(
   repoRoot: string,
   stream: { write(chunk: string): unknown } = process.stderr,
 ): boolean {
-  let result: { srcMtime: number; distMtime: number } | null;
   try {
-    result = checkStaleDist(repoRoot);
+    const result = checkStaleDist(repoRoot);
+    if (!result) return false;
+    stream.write(
+      "Warning: compiled dist/ is older than src/ — you are running stale code.\n" +
+        "  Run `npm run build:cli` to rebuild, then retry.\n" +
+        "  (dist/ is gitignored, so `git pull` does not update it. See #1958.)\n",
+    );
+    return true;
   } catch {
     return false;
   }
-  if (!result) return false;
-
-  stream.write(
-    "Warning: compiled dist/ is older than src/ — you are running stale code.\n" +
-      "  Run `npm run build:cli` to rebuild, then retry.\n" +
-      "  (dist/ is gitignored, so `git pull` does not update it. See #1958.)\n",
-  );
-  return true;
 }

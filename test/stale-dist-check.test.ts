@@ -89,4 +89,16 @@ describe("stale-dist-check", () => {
     const stream = { write: () => {} };
     expect(warnIfStale(root, stream)).toBe(false);
   });
+
+  it("warnIfStale swallows stream write errors (never throws)", () => {
+    writeFile(path.join(root, "dist", "lib", "foo.js"), "x", 1_000_000);
+    writeFile(path.join(root, "src", "lib", "foo.ts"), "x", 5_000_000);
+    const throwingStream = {
+      write: () => {
+        throw new Error("EPIPE");
+      },
+    };
+    expect(() => warnIfStale(root, throwingStream)).not.toThrow();
+    expect(warnIfStale(root, throwingStream)).toBe(false);
+  });
 });
