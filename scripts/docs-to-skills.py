@@ -663,8 +663,6 @@ NOUN_STOP = {
     "disable",
     "manage",
     "works",
-    "agent",
-    "agents",
 }
 
 PROJECT_STOP = set()  # Populated at runtime from --prefix
@@ -790,22 +788,44 @@ def _brand_case(text: str) -> str:
 def build_skill_description(name: str, pages: list[DocPage]) -> str:
     """Build the description field for the skill frontmatter.
 
-    When a page supplies ``description.agent``, its text is used verbatim.
-    Legacy flat descriptions are still converted to third-person voice.
+    Uses the lead page's ``description.agent`` (or third-person-normalized
+    legacy ``description``) verbatim. When the skill bundles additional
+    pages that ship as files under ``references/``, appends a short
+    ``Includes references: ...`` clause listing their filenames so an agent
+    can see at a glance what extra material the skill carries without each
+    extra page's own ``description.agent`` being inlined.
+
     Keeps description under 1024 characters.
     """
-    descriptions = [
-        d if is_agent else _to_third_person(d)
-        for d, is_agent in ((p.description, p.description_is_agent) for p in pages if p.description)
-    ]
-    if descriptions:
-        combined = " ".join(d.rstrip().rstrip(".") + "." for d in descriptions)
-    else:
-        combined = f"Documentation-derived skill for {name.replace('-', ' ')}."
+    if not pages:
+        return f"Documentation-derived skill for {name.replace('-', ' ')}."
 
-    if len(combined) > 1024:
-        combined = combined[:1020] + "..."
-    return combined
+    lead = pages[0]
+    if lead.description:
+        lead_desc = (
+            lead.description
+            if lead.description_is_agent
+            else _to_third_person(lead.description)
+        )
+        lead_desc = lead_desc.rstrip().rstrip(".") + "."
+    else:
+        lead_desc = f"Documentation-derived skill for {name.replace('-', ' ')}."
+
+    # Every concept/reference page (including the lead, when applicable) is
+    # materialized as a file under references/. List them all in the
+    # description so the clause matches what's on disk one-to-one and the
+    # agent sees every reference file the skill ships.
+    ref_files = [
+        p.path.stem + ".md"
+        for p in pages
+        if CONTENT_TYPE_ROLE.get(p.content_type) in ("reference", "context")
+    ]
+    if ref_files:
+        lead_desc += " Includes references: " + ", ".join(ref_files) + "."
+
+    if len(lead_desc) > 1024:
+        lead_desc = lead_desc[:1020] + "..."
+    return lead_desc
 
 
 def yaml_scalar(value: str) -> str:
@@ -1173,6 +1193,9 @@ EXCLUDED_PATTERNS = {
     "LICENSE.md",
     "license.md",
     "index.md",
+    # Maintainer-only content consumed directly by skills/dashboards;
+    # not user-facing documentation.
+    "triage-instructions.md",
 }
 
 

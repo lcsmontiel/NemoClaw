@@ -1,6 +1,6 @@
 ---
 name: "nemoclaw-user-workspace"
-description: "Hows to back up and restore OpenClaw workspace files before destructive operations. Whats workspace personality and configuration files are, where they live, and how they persist across sandbox restarts."
+description: "Backs up and restores OpenClaw workspace files before destructive operations such as sandbox rebuilds. Use when downloading workspace files from a sandbox, uploading restored files into a new sandbox, or preserving sandbox state across rebuilds. Includes references: workspace-files.md."
 ---
 
 <!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
@@ -8,7 +8,7 @@ description: "Hows to back up and restore OpenClaw workspace files before destru
 
 # NemoClaw User Workspace
 
-How to back up and restore OpenClaw workspace files before destructive operations.
+Backs up and restores OpenClaw workspace files before destructive operations such as sandbox rebuilds. Use when downloading workspace files from a sandbox, uploading restored files into a new sandbox, or preserving sandbox state across rebuilds.
 
 ## Context
 

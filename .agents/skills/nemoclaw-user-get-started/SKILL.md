@@ -1,6 +1,6 @@
 ---
 name: "nemoclaw-user-get-started"
-description: "Installs NemoClaw, launches a sandbox, and runs the first agent prompt. Use when onboarding, installing, or launching a NemoClaw sandbox for the first time. There are additional Windows-only prerequisites before the Quickstart to install NemoClaw on Windows."
+description: "Installs NemoClaw, launches a sandbox, and runs the first agent prompt. Use when onboarding, installing, or launching a NemoClaw sandbox for the first time. Includes references: windows-setup.md."
 ---
 
 <!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->

@@ -1,6 +1,6 @@
 ---
 name: "nemoclaw-user-configure-security"
-description: "Presents a risk framework for every configurable security control in NemoClaw. Use when evaluating security posture, reviewing sandbox security defaults, or assessing control trade-offs. Explains where NemoClaw stores provider credentials, the file permissions it applies, and the operational security trade-offs of plaintext local storage. Use when reviewing credential handling or advising users how to secure stored API keys. Lists OpenClaw security controls that operate independently of NemoClaw, including prompt injection detection, tool access control, rate limiting, environment variable policy, audit framework, supply chain scanning, messaging access policy, context visibility, and safe regex. Use when reviewing the security boundary between NemoClaw and OpenClaw or assessing what NemoClaw does not cover."
+description: "Presents a risk framework for every configurable security control in NemoClaw. Use when evaluating security posture, reviewing sandbox security defaults, or assessing control trade-offs. Includes references: best-practices.md, credential-storage.md, openclaw-controls.md."
 ---
 
 <!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
