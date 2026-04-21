@@ -147,7 +147,7 @@ apply_preset() {
   local preset_name="$1"
   local preset_list preset_num
   preset_list=$(nemoclaw "$SANDBOX_NAME" policy-add </dev/null 2>&1) || true
-  preset_num=$(echo "$preset_list" | grep -oE '[0-9]+\) . '"$preset_name" | grep -oE '^[0-9]+') || true
+  preset_num=$(echo "$preset_list" | grep -oE '[0-9]+\) [^ ]+ '"$preset_name" | grep -oE '^[0-9]+') || true
   if [[ -z "$preset_num" ]]; then
     log "  Could not find '$preset_name' in preset list"
     return 1
@@ -341,7 +341,7 @@ fetch('$target_url', {signal: AbortSignal.timeout(15000)})
   log "  Step 2: Running policy-add --dry-run slack..."
   local slack_list slack_num
   slack_list=$(nemoclaw "$SANDBOX_NAME" policy-add --dry-run </dev/null 2>&1) || true
-  slack_num=$(echo "$slack_list" | grep -oE '[0-9]+\) . slack ' | grep -oE '^[0-9]+') || true
+  slack_num=$(echo "$slack_list" | grep -oE '[0-9]+\) [^ ]+ slack ' | grep -oE '^[0-9]+') || true
   if [[ -z "$slack_num" ]]; then
     fail "TC-NET-04: Setup" "Could not find slack in preset list"
     return
