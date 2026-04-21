@@ -747,4 +747,19 @@ describe.runIf(hasRequiredVars && hasAuthenticatedBrev)("Brev E2E", () => {
     },
     900_000, // 15 min — creates a new sandbox with messaging providers
   );
+
+  // Brev-specific Ollama reachability coverage (#1924). Installs Ollama on the
+  // CPU Brev host, pulls qwen2.5:0.5b, onboards with NEMOCLAW_PROVIDER=ollama,
+  // and verifies the sandbox → auth-proxy → Ollama chain. Not rolled into
+  // TEST_SUITE=all yet — inference on CPU can take up to 120s and would slow
+  // the default sweep. Trigger explicitly with TEST_SUITE=ollama.
+  it.runIf(TEST_SUITE === "ollama")(
+    "ollama reachability suite passes on remote VM",
+    () => {
+      const output = runRemoteTest("test/e2e/test-ollama-brev-e2e.sh");
+      expect(output).toContain("PASS");
+      expect(output).not.toMatch(/FAIL:/);
+    },
+    1_500_000, // 25 min — ollama install + model pull + onboard + CPU inference
+  );
 });

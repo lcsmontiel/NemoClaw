@@ -46,6 +46,7 @@ on:
           - credential-sanitization
           - telegram-injection
           - messaging-providers
+          - ollama
           - all
       use_launchable:
         description: "Use CI launchable (true) or bare brev create + brev-setup.sh (false)"
