@@ -1,8 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { createRequire } from "node:module";
-
 import { describe, expect, it, vi } from "vitest";
 
 import {
@@ -10,12 +8,6 @@ import {
   runListCommand,
   runRegisteredListCommand,
 } from "./list-command";
-import {
-  clearListCommandDepsProvider,
-  setListCommandDepsProvider,
-} from "./list-command-runtime";
-
-const require = createRequire(import.meta.url);
 
 function makeExit(): (code: number) => never {
   return ((code: number) => {
@@ -23,22 +15,39 @@ function makeExit(): (code: number) => never {
   }) as (code: number) => never;
 }
 
+function captureConsoleLog(): { chunks: string[]; restore: () => void } {
+  const chunks: string[] = [];
+  const spy = vi.spyOn(console, "log").mockImplementation((message?: string) => {
+    chunks.push(message ?? "");
+  });
+
+  return {
+    chunks,
+    restore: () => spy.mockRestore(),
+  };
+}
+
 describe("list command", () => {
-  it("prints list usage via the oclif help flag without loading inventory", async () => {
+  it("prints oclif help for the standalone list command without loading inventory", async () => {
     const recoverRegistryEntries = vi.fn(async () => ({ sandboxes: [], defaultSandbox: null }));
-    const lines: string[] = [];
+    const stdout = captureConsoleLog();
 
-    await runListCommand(["--help"], {
-      rootDir: process.cwd(),
-      recoverRegistryEntries,
-      getLiveInference: () => null,
-      loadLastSession: () => null,
-      log: (message = "") => lines.push(message),
-      error: vi.fn(),
-      exit: makeExit(),
-    });
+    try {
+      await runListCommand(["--help"], {
+        rootDir: process.cwd(),
+        recoverRegistryEntries,
+        getLiveInference: () => null,
+        loadLastSession: () => null,
+        log: vi.fn(),
+        error: vi.fn(),
+        exit: makeExit(),
+      });
+    } finally {
+      stdout.restore();
+    }
 
-    expect(lines).toEqual(["  Usage: nemoclaw list [--json]", ""]);
+    expect(stdout.chunks.join("")).toContain("USAGE");
+    expect(stdout.chunks.join("")).toContain("$ nemoclaw list [--json]");
     expect(recoverRegistryEntries).not.toHaveBeenCalled();
   });
 
@@ -135,23 +144,7 @@ describe("list command", () => {
   });
 
   it("runs the registered list command through the explicit oclif map", async () => {
-    const lines: string[] = [];
-    const distRuntime = require("../../dist/lib/list-command-runtime.js") as {
-      setListCommandDepsProvider: (provider: () => Record<string, unknown>) => void;
-      clearListCommandDepsProvider: () => void;
-    };
-    const provider = () => ({
-      rootDir: process.cwd(),
-      recoverRegistryEntries: async () => ({ sandboxes: [], defaultSandbox: null }),
-      getLiveInference: () => null,
-      loadLastSession: () => null,
-      log: (message = "") => lines.push(message),
-      error: vi.fn(),
-      exit: makeExit(),
-    });
-
-    setListCommandDepsProvider(provider);
-    distRuntime.setListCommandDepsProvider(provider);
+    const stdout = captureConsoleLog();
 
     try {
       await runRegisteredListCommand(["--help"], {
@@ -160,14 +153,14 @@ describe("list command", () => {
         exit: makeExit(),
       });
     } finally {
-      clearListCommandDepsProvider();
-      distRuntime.clearListCommandDepsProvider();
+      stdout.restore();
     }
 
-    expect(lines).toEqual(["  Usage: nemoclaw list [--json]", ""]);
+    expect(stdout.chunks.join("")).toContain("USAGE");
+    expect(stdout.chunks.join("")).toContain("$ nemoclaw list [--json]");
   });
 
-  it("converts oclif parse errors into list-specific usage output", async () => {
+  it("forwards oclif parse errors for invalid list flags", async () => {
     const errorLines: string[] = [];
 
     await expect(
@@ -180,12 +173,8 @@ describe("list command", () => {
         error: (message = "") => errorLines.push(message),
         exit: makeExit(),
       }),
-    ).rejects.toThrow("EXIT:1");
+    ).rejects.toThrow("EXIT:2");
 
-    expect(errorLines).toEqual([
-      "  Unknown argument(s) for list: --bogus",
-      "  Usage: nemoclaw list [--json]",
-      "",
-    ]);
+    expect(errorLines).toEqual(["  Nonexistent flag: --bogus\nSee more help with --help"]);
   });
 });

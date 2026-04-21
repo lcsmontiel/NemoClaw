@@ -15,11 +15,6 @@ export interface RunListCommandDeps extends ListSandboxesCommandDeps {
   exit?: (code: number) => never;
 }
 
-export function printListUsage(log: (message?: string) => void = console.log): void {
-  log("  Usage: nemoclaw list [--json]");
-  log("");
-}
-
 function isListParseError(error: unknown): boolean {
   const name =
     error && typeof error === "object"
@@ -43,6 +38,7 @@ export function createListCommand(
   depsOrProvider: RunListCommandDeps | (() => RunListCommandDeps),
 ): ListCommandClass {
   return class ListCommand extends Command {
+    static id = "list";
     static strict = true;
     static enableJsonFlag = true;
     static summary = "List all sandboxes";
@@ -50,7 +46,7 @@ export function createListCommand(
       "List all registered sandboxes with their model, provider, and policy presets.";
     static usage = ["list [--json]"];
     static flags = {
-      help: Flags.boolean({ char: "h" }),
+      help: Flags.help({ char: "h" }),
     };
 
     protected logJson(json: unknown): void {
@@ -60,15 +56,9 @@ export function createListCommand(
     }
 
     public async run(): Promise<unknown> {
-      const { flags } = await this.parse(ListCommand);
+      await this.parse(ListCommand);
       const deps = resolveListCommandDeps(depsOrProvider);
       const log = deps.log ?? console.log;
-
-      if (flags.help) {
-        printListUsage(log);
-        return;
-      }
-
       const inventory = await getSandboxInventory(deps);
       if (this.jsonEnabled()) {
         return inventory;
@@ -79,20 +69,51 @@ export function createListCommand(
   };
 }
 
+function getOclifExitCode(error: unknown): number | null {
+  if (!error || typeof error !== "object") {
+    return null;
+  }
+
+  const oclif = (error as { oclif?: { exit?: number } }).oclif;
+  return typeof oclif?.exit === "number" ? oclif.exit : null;
+}
+
+function formatOclifError(error: unknown): string {
+  if (error instanceof Error) {
+    return error.message.trim();
+  }
+
+  return String(error).trim();
+}
+
+function handleListCommandError(
+  error: unknown,
+  writer: (message?: string) => void,
+  exit: (code: number) => never,
+): never | void {
+  const exitCode = getOclifExitCode(error);
+  if (exitCode === 0) {
+    process.exitCode = 0;
+    return;
+  }
+
+  if (isListParseError(error)) {
+    writer(`  ${formatOclifError(error)}`);
+    exit(exitCode ?? 1);
+  }
+
+  throw error;
+}
+
 export async function runListCommand(args: string[], deps: RunListCommandDeps): Promise<void> {
   const ListCommand = createListCommand(deps);
+  const errorLine = deps.error ?? console.error;
+  const exit = deps.exit ?? ((code: number) => process.exit(code));
 
   try {
     await ListCommand.run(args, deps.rootDir);
   } catch (error) {
-    if (isListParseError(error)) {
-      const errorLine = deps.error ?? console.error;
-      const exit = deps.exit ?? ((code: number) => process.exit(code));
-      errorLine(`  Unknown argument(s) for list: ${args.join(", ")}`);
-      printListUsage(errorLine);
-      exit(1);
-    }
-    throw error;
+    handleListCommandError(error, errorLine, exit);
   }
 }
 
@@ -101,17 +122,12 @@ export async function runRegisteredListCommand(
   opts: Pick<RunListCommandDeps, "rootDir" | "error" | "exit">,
 ): Promise<void> {
   const config = await OclifConfig.load(opts.rootDir);
+  const errorLine = opts.error ?? console.error;
+  const exit = opts.exit ?? ((code: number) => process.exit(code));
 
   try {
     await config.runCommand("list", args);
   } catch (error) {
-    if (isListParseError(error)) {
-      const errorLine = opts.error ?? console.error;
-      const exit = opts.exit ?? ((code: number) => process.exit(code));
-      errorLine(`  Unknown argument(s) for list: ${args.join(", ")}`);
-      printListUsage(errorLine);
-      exit(1);
-    }
-    throw error;
+    handleListCommandError(error, errorLine, exit);
   }
 }
