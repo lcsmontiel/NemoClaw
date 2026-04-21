@@ -1,17 +1,20 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
-//
-// Warn when compiled `dist/` is older than `src/` in a dev checkout.
-// `dist/` is gitignored, so a `git pull` that touches `src/` leaves the old
-// compiled output in place — see #1958, where a reverted BASE_IMAGE digest
-// patch in stale `dist/lib/onboard.js` produced a cryptic "manifest unknown".
-// In published npm installs there is no `src/`, so this no-ops.
+
+/**
+ * Warn when compiled `dist/` is older than `src/` in a dev checkout.
+ * `dist/` is gitignored, so a `git pull` that touches `src/` leaves the old
+ * compiled output in place — see #1958, where a reverted BASE_IMAGE digest
+ * patch in stale `dist/lib/onboard.js` produced a cryptic "manifest unknown".
+ * In published npm installs there is no `src/`, so this no-ops.
+ */
 
 const fs = require("fs");
 const path = require("path");
 
 const GRACE_MS = 2000;
 
+/** Return the newest mtime (ms) under `root` among files where `accept(name)` is true. Returns 0 if nothing matches or `root` is unreadable. */
 function maxMtime(root, accept) {
   let newest = 0;
   const stack = [root];
@@ -42,6 +45,7 @@ function maxMtime(root, accept) {
   return newest;
 }
 
+/** Return `{ srcMtime, distMtime }` when compiled dist/ is older than src/ by more than the grace window; return null otherwise or when either directory is missing. */
 function checkStaleDist(repoRoot) {
   const srcDir = path.join(repoRoot, "src");
   const distDir = path.join(repoRoot, "dist");
@@ -55,6 +59,7 @@ function checkStaleDist(repoRoot) {
   return { srcMtime, distMtime };
 }
 
+/** Print a stale-dist warning to `stream` if dist/ is out of date. Returns true when a warning was emitted, false otherwise. Never throws — fails open on I/O errors. */
 function warnIfStale(repoRoot, stream = process.stderr) {
   let result;
   try {
