@@ -606,12 +606,18 @@ describe("policies", () => {
       }
     });
 
-    it("messaging REST presets do not pin deprecated tls termination", () => {
-      for (const name of ["discord", "slack", "telegram"]) {
+    it("messaging WebSocket presets use tls: skip, not terminate", () => {
+      for (const name of ["discord", "slack"]) {
         const content = policies.loadPreset(name);
         expect(content).toBeTruthy();
         expect(content.includes("tls: terminate")).toBe(false);
       }
+    });
+
+    it("telegram REST preset uses tls: terminate for L7 proxy", () => {
+      const content = policies.loadPreset("telegram");
+      expect(content).toBeTruthy();
+      expect(content.includes("tls: terminate")).toBe(true);
     });
 
     it("pypi preset allows HEAD for pip lazy-wheel metadata checks", () => {
