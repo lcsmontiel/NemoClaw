@@ -43,8 +43,13 @@ function runInstallerFunction(
   fakeBin: string,
   extraEnv: NodeJS.ProcessEnv = {},
   cwd?: string,
+  /** When true, bashSnippet is run verbatim (caller handles sourcing). */
+  rawSnippet = false,
 ) {
-  return spawnSync("bash", ["-c", `source "${INSTALLER_PAYLOAD}" >/dev/null 2>&1; ${bashSnippet}`], {
+  const cmd = rawSnippet
+    ? bashSnippet
+    : `source "${INSTALLER_PAYLOAD}" >/dev/null 2>&1; ${bashSnippet}`;
+  return spawnSync("bash", ["-c", cmd], {
     cwd: cwd ?? path.join(import.meta.dirname, ".."),
     encoding: "utf-8",
     env: {
@@ -53,6 +58,14 @@ function runInstallerFunction(
       ...extraEnv,
     },
   });
+}
+
+/**
+ * Returns true when the test suite is running as root on Linux and should
+ * drop privileges for permission-sensitive assertions.
+ */
+function isLinuxRoot(): boolean {
+  return typeof process.getuid === "function" && process.getuid() === 0 && process.platform === "linux";
 }
 
 describe("installer npm resolution", () => {
@@ -160,21 +173,41 @@ exit 98
     const prefix = path.join(tmp, "prefix");
     const prefixBin = path.join(prefix, "bin");
     const prefixLib = path.join(prefix, "lib");
+    const needsDrop = isLinuxRoot();
 
     fs.mkdirSync(fakeBin);
     fs.mkdirSync(prefixBin, { recursive: true });
     fs.mkdirSync(prefixLib, { recursive: true });
-    fs.chmodSync(prefixBin, 0o755);
+    fs.chmodSync(tmp, 0o755);
+    fs.chmodSync(fakeBin, 0o755);
+    // When running as root, we wrap the snippet in `runuser` to drop to
+    // nobody so `test -w` behaves like a normal installer user. Make bin
+    // world-writable in that mode so the lib directory is the actual blocker.
+    fs.chmodSync(prefixBin, needsDrop ? 0o777 : 0o755);
     fs.chmodSync(prefixLib, 0o555);
 
-    const result = runInstallerFunction(
-      'if npm_link_targets_writable "$TARGET_PREFIX"; then echo WRITABLE; else echo BLOCKED; fi',
-      fakeBin,
-      {
+    const innerSnippet = 'if npm_link_targets_writable "$TARGET_PREFIX"; then echo WRITABLE; else echo BLOCKED; fi';
+
+    let result;
+    if (needsDrop) {
+      // WSL does not support setuid via Node's uid/gid spawn options (EACCES).
+      // Copy the installer payload into the temp dir (world-readable) and use
+      // su to drop to nobody for the permission-sensitive assertion.
+      const localPayload = path.join(tmp, "install.sh");
+      fs.copyFileSync(INSTALLER_PAYLOAD, localPayload);
+      fs.chmodSync(localPayload, 0o644);
+      const wrapped =
+        `su -s /bin/bash nobody -c 'source "${localPayload}" >/dev/null 2>&1; ${innerSnippet}'`;
+      result = runInstallerFunction(wrapped, fakeBin, {
         HOME: tmp,
         TARGET_PREFIX: prefix,
-      },
-    );
+      }, tmp, true);
+    } else {
+      result = runInstallerFunction(innerSnippet, fakeBin, {
+        HOME: tmp,
+        TARGET_PREFIX: prefix,
+      });
+    }
 
     expect(result.status).toBe(0);
     expect(result.stdout.trim()).toBe("BLOCKED");
