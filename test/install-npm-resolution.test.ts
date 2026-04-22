@@ -4,7 +4,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { execFileSync, spawnSync } from "node:child_process";
+import { spawnSync } from "node:child_process";
 
 import { describe, expect, it } from "vitest";
 
@@ -43,11 +43,13 @@ function runInstallerFunction(
   fakeBin: string,
   extraEnv: NodeJS.ProcessEnv = {},
   cwd?: string,
-  spawnOptions: { uid?: number; gid?: number } = {},
-  installerPath?: string,
+  /** When true, bashSnippet is run verbatim (caller handles sourcing). */
+  rawSnippet = false,
 ) {
-  const payload = installerPath ?? INSTALLER_PAYLOAD;
-  return spawnSync("bash", ["-c", `source "${payload}" >/dev/null 2>&1; ${bashSnippet}`], {
+  const cmd = rawSnippet
+    ? bashSnippet
+    : `source "${INSTALLER_PAYLOAD}" >/dev/null 2>&1; ${bashSnippet}`;
+  return spawnSync("bash", ["-c", cmd], {
     cwd: cwd ?? path.join(import.meta.dirname, ".."),
     encoding: "utf-8",
     env: {
@@ -55,19 +57,15 @@ function runInstallerFunction(
       PATH: `${fakeBin}:${TEST_SYSTEM_PATH}`,
       ...extraEnv,
     },
-    ...spawnOptions,
   });
 }
 
-function nonRootSpawnOptions(): { uid?: number; gid?: number } {
-  if (typeof process.getuid !== "function" || process.getuid() !== 0 || process.platform !== "linux") {
-    return {};
-  }
-
-  return {
-    uid: Number.parseInt(execFileSync("id", ["-u", "nobody"], { encoding: "utf-8" }).trim(), 10),
-    gid: Number.parseInt(execFileSync("id", ["-g", "nobody"], { encoding: "utf-8" }).trim(), 10),
-  };
+/**
+ * Returns true when the test suite is running as root on Linux and should
+ * drop privileges for permission-sensitive assertions.
+ */
+function isLinuxRoot(): boolean {
+  return typeof process.getuid === "function" && process.getuid() === 0 && process.platform === "linux";
 }
 
 describe("installer npm resolution", () => {
@@ -175,53 +173,42 @@ exit 98
     const prefix = path.join(tmp, "prefix");
     const prefixBin = path.join(prefix, "bin");
     const prefixLib = path.join(prefix, "lib");
-    const spawnOptions = nonRootSpawnOptions();
+    const needsDrop = isLinuxRoot();
 
     fs.mkdirSync(fakeBin);
     fs.mkdirSync(prefixBin, { recursive: true });
     fs.mkdirSync(prefixLib, { recursive: true });
     fs.chmodSync(tmp, 0o755);
     fs.chmodSync(fakeBin, 0o755);
-    // When the test suite runs as root (WSL CI), drop to nobody so `test -w`
-    // behaves like a normal installer user. Make bin writable in that mode so
-    // the lib directory is the blocker we are actually asserting on.
-    fs.chmodSync(prefixBin, spawnOptions.uid !== undefined ? 0o777 : 0o755);
+    // When running as root, we wrap the snippet in `runuser` to drop to
+    // nobody so `test -w` behaves like a normal installer user. Make bin
+    // world-writable in that mode so the lib directory is the actual blocker.
+    fs.chmodSync(prefixBin, needsDrop ? 0o777 : 0o755);
     fs.chmodSync(prefixLib, 0o555);
 
-    // When dropping to nobody, the repo checkout may not be traversable.
-    // Copy the installer payload into the temp dir so nobody can read it,
-    // and use tmp as cwd so nobody can cd into it.
-    let installerPath: string | undefined;
-    let cwd: string | undefined;
-    if (spawnOptions.uid !== undefined) {
-      installerPath = path.join(tmp, "install.sh");
-      fs.copyFileSync(INSTALLER_PAYLOAD, installerPath);
-      fs.chmodSync(installerPath, 0o644);
-      cwd = tmp;
-    }
+    const innerSnippet = 'if npm_link_targets_writable "$TARGET_PREFIX"; then echo WRITABLE; else echo BLOCKED; fi';
 
-    const result = runInstallerFunction(
-      'if npm_link_targets_writable "$TARGET_PREFIX"; then echo WRITABLE; else echo BLOCKED; fi',
-      fakeBin,
-      {
+    let result;
+    if (needsDrop) {
+      // WSL does not support setuid via Node's uid/gid spawn options (EACCES).
+      // Copy the installer payload into the temp dir (world-readable) and use
+      // runuser to drop to nobody for the permission-sensitive assertion.
+      const localPayload = path.join(tmp, "install.sh");
+      fs.copyFileSync(INSTALLER_PAYLOAD, localPayload);
+      fs.chmodSync(localPayload, 0o644);
+      const wrapped =
+        `runuser -u nobody -- bash -c 'source "${localPayload}" >/dev/null 2>&1; ${innerSnippet}'`;
+      result = runInstallerFunction(wrapped, fakeBin, {
         HOME: tmp,
         TARGET_PREFIX: prefix,
-      },
-      cwd,
-      spawnOptions,
-      installerPath,
-    );
-
-    // Debug: surface signal/stderr on WSL failures so CI logs show the root cause.
-    if (result.status === null) {
-      console.error("[DEBUG] spawnOptions:", JSON.stringify(spawnOptions));
-      console.error("[DEBUG] cwd:", cwd ?? "(repo root)");
-      console.error("[DEBUG] installerPath:", installerPath ?? "(default)");
-      console.error("[DEBUG] signal:", result.signal);
-      console.error("[DEBUG] error:", result.error);
-      console.error("[DEBUG] stderr:", result.stderr?.slice(0, 500));
-      console.error("[DEBUG] stdout:", result.stdout?.slice(0, 500));
+      }, tmp, true);
+    } else {
+      result = runInstallerFunction(innerSnippet, fakeBin, {
+        HOME: tmp,
+        TARGET_PREFIX: prefix,
+      });
     }
+
     expect(result.status).toBe(0);
     expect(result.stdout.trim()).toBe("BLOCKED");
   });
