@@ -31,7 +31,6 @@ describe("onboard command", () => {
       fromDockerfile: null,
       acceptThirdPartySoftware: true,
       agent: null,
-      dangerouslySkipPermissions: false,
     });
   });
 
@@ -56,7 +55,6 @@ describe("onboard command", () => {
       fromDockerfile: null,
       acceptThirdPartySoftware: true,
       agent: null,
-      dangerouslySkipPermissions: false,
     });
   });
 
@@ -80,7 +78,6 @@ describe("onboard command", () => {
       fromDockerfile: null,
       acceptThirdPartySoftware: false,
       agent: null,
-      dangerouslySkipPermissions: false,
     });
   });
 
@@ -103,7 +100,6 @@ describe("onboard command", () => {
     expect(lines.join("\n")).toContain("Usage: nemoclaw onboard");
     expect(lines.join("\n")).toContain("--from <Dockerfile>");
     expect(lines.join("\n")).toContain("--agent <name>");
-    expect(lines.join("\n")).toContain("--dangerously-skip-permissions");
   });
 
   it("parses --from <Dockerfile>", () => {
@@ -127,7 +123,6 @@ describe("onboard command", () => {
       fromDockerfile: "/tmp/Custom.Dockerfile",
       acceptThirdPartySoftware: false,
       agent: null,
-      dangerouslySkipPermissions: false,
     });
   });
 
@@ -168,10 +163,10 @@ describe("onboard command", () => {
     expect(errors.join("\n")).toContain("Usage: nemoclaw onboard");
   });
 
-  it("parses --agent and --dangerously-skip-permissions", () => {
+  it("parses --agent", () => {
     expect(
       parseOnboardArgs(
-        ["--agent", "openclaw", "--dangerously-skip-permissions"],
+        ["--agent", "openclaw"],
         "--yes-i-accept-third-party-software",
         "NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE",
         {
@@ -190,7 +185,6 @@ describe("onboard command", () => {
       fromDockerfile: null,
       acceptThirdPartySoftware: false,
       agent: "openclaw",
-      dangerouslySkipPermissions: true,
     });
   });
 
@@ -241,7 +235,6 @@ describe("onboard command", () => {
       fromDockerfile: null,
       acceptThirdPartySoftware: false,
       agent: null,
-      dangerouslySkipPermissions: false,
     });
   });
 

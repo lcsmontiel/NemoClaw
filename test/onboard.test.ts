@@ -2212,7 +2212,7 @@ const { setupInference } = require(${onboardPath});
 
     assert.match(
       source,
-      /startRecordedStep\("sandbox", \{ sandboxName, provider, model \}\);\s*selectedMessagingChannels = await setupMessagingChannels\(\);\s*onboardSession\.updateSession\(\(current\) => \{\s*current\.messagingChannels = selectedMessagingChannels;\s*return current;\s*\}\);\s*sandboxName = await createSandbox\(\s*gpu,\s*model,\s*provider,\s*preferredInferenceApi,\s*sandboxName,\s*nextWebSearchConfig,\s*selectedMessagingChannels,\s*fromDockerfile,\s*agent,\s*dangerouslySkipPermissions,\s*\);/,
+      /startRecordedStep\("sandbox", \{ sandboxName, provider, model \}\);\s*selectedMessagingChannels = await setupMessagingChannels\(\);\s*onboardSession\.updateSession\(\(current\) => \{\s*current\.messagingChannels = selectedMessagingChannels;\s*return current;\s*\}\);\s*sandboxName = await createSandbox\(\s*gpu,\s*model,\s*provider,\s*preferredInferenceApi,\s*sandboxName,\s*nextWebSearchConfig,\s*selectedMessagingChannels,\s*fromDockerfile,\s*agent,\s*\);/,
     );
   });
 
@@ -2229,27 +2229,6 @@ const { setupInference } = require(${onboardPath});
     assert.match(
       source,
       /skippedStepMessage\("policies", \(recordedPolicyPresets \|\| \[\]\)\.join\(", "\)\)/,
-    );
-  });
-
-  it("enters permanent shields-down state when dangerouslySkipPermissions is true", () => {
-    const source = fs.readFileSync(
-      path.join(import.meta.dirname, "..", "src", "lib", "onboard.ts"),
-      "utf-8",
-    );
-
-    // The dangerouslySkipPermissions branch must call shields.shieldsDownPermanent
-    // to activate the permissive policy, unlock the config file with doctor-aligned
-    // permissions, and record permanent shields-down state. This replaced the
-    // previous policies.applyPermissivePolicy call to unify the shields state machine.
-    assert.match(
-      source,
-      /if \(dangerouslySkipPermissions\) \{\s*step\(8, 8, "Policy presets"\);\s*if \(!waitForSandboxReady\(sandboxName\)\) \{[\s\S]*?\}\s*shields\.shieldsDownPermanent\(sandboxName\);/,
-    );
-    // Must NOT just print a skip message without activating the policy.
-    assert.doesNotMatch(
-      source,
-      /dangerouslySkipPermissions\)[\s\S]*?Skipped —.*permissive base policy/,
     );
   });
 

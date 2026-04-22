@@ -198,7 +198,7 @@ describe("snapshot", () => {
           "chown",
           "-R",
           "sandbox:sandbox",
-          "/sandbox/.openclaw-data",
+          "/sandbox/.openclaw",
         ],
         { reject: false },
       );

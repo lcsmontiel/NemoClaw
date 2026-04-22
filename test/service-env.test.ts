@@ -162,59 +162,7 @@ describe("service environment", () => {
     });
   });
 
-  describe("XDG and tool cache redirects (issue #804)", () => {
-    it("entrypoint exports redirect all XDG and tool dirs to /tmp", () => {
-      const scriptPath = join(import.meta.dirname, "../scripts/nemoclaw-start.sh");
-      const src = readFileSync(scriptPath, "utf-8");
-      // Redirects are defined in the _TOOL_REDIRECTS array (single source of truth)
-      expect(src).toContain("_TOOL_REDIRECTS=(");
-      // XDG base dirs
-      expect(src).toContain("XDG_CACHE_HOME=/tmp/.cache");
-      expect(src).toContain("XDG_CONFIG_HOME=/tmp/.config");
-      expect(src).toContain("XDG_DATA_HOME=/tmp/.local/share");
-      expect(src).toContain("XDG_STATE_HOME=/tmp/.local/state");
-      expect(src).toContain("XDG_RUNTIME_DIR=/tmp/.runtime");
-      // Tool-specific redirects
-      expect(src).toContain("GNUPGHOME=/tmp/.gnupg");
-      expect(src).toContain("PYTHON_HISTORY=/tmp/.python_history");
-      expect(src).toContain("npm_config_prefix=/tmp/npm-global");
-    });
-
-    it("entrypoint pre-creates redirected dirs as sandbox user", () => {
-      const scriptPath = join(import.meta.dirname, "../scripts/nemoclaw-start.sh");
-      const src = readFileSync(scriptPath, "utf-8");
-      // install -d creates dirs with correct ownership before the gateway
-      // starts, preventing gateway:gateway ownership that blocks sandbox writes
-      expect(src).toContain("install -d -o sandbox -g sandbox");
-      expect(src).toContain("/tmp/.config");
-      expect(src).toContain("/tmp/.cache");
-      expect(src).toContain("/tmp/.local/share");
-      expect(src).toContain("/tmp/npm-global");
-    });
-
-    it("entrypoint creates GNUPGHOME with restrictive permissions", () => {
-      const scriptPath = join(import.meta.dirname, "../scripts/nemoclaw-start.sh");
-      const src = readFileSync(scriptPath, "utf-8");
-      expect(src).toContain("install -d -o sandbox -g sandbox -m 700 /tmp/.gnupg");
-      expect(src).toContain("install -d -m 700 /tmp/.gnupg");
-    });
-  });
-
   describe("proxy environment variables (issue #626)", () => {
-    function extractToolRedirects() {
-      const scriptPath = join(import.meta.dirname, "../scripts/nemoclaw-start.sh");
-      const block = execFileSync("sed", ["-n", "/^_TOOL_REDIRECTS=/,/^done$/p", scriptPath], {
-        encoding: "utf-8",
-      });
-      if (!block.trim()) {
-        throw new Error(
-          "Failed to extract _TOOL_REDIRECTS from scripts/nemoclaw-start.sh — " +
-            "the array may have been moved or renamed",
-        );
-      }
-      return block.trimEnd();
-    }
-
     function extractProxyVars(env = {}) {
       const scriptPath = join(import.meta.dirname, "../scripts/nemoclaw-start.sh");
       const proxyBlock = execFileSync(
@@ -322,10 +270,8 @@ describe("service environment", () => {
               "the _PROXY_URL..chmod block may have been moved or renamed",
           );
         }
-        const toolRedirects = extractToolRedirects();
         const wrapper = [
           "#!/usr/bin/env bash",
-          toolRedirects,
           'PROXY_HOST="10.200.0.1"',
           'PROXY_PORT="3128"',
           // Override the hardcoded path to use our temp dir
@@ -342,18 +288,6 @@ describe("service environment", () => {
         expect(envFile).toContain("export NO_PROXY=");
         expect(envFile).not.toContain("inference.local");
         expect(envFile).toContain("10.200.0.1");
-        // Tool cache redirects should be present (#804)
-        expect(envFile).toContain("npm_config_cache");
-        expect(envFile).toContain("HISTFILE");
-        expect(envFile).toContain("GIT_CONFIG_GLOBAL");
-        // XDG redirects prevent tools from writing to read-only /sandbox (#804)
-        expect(envFile).toContain("XDG_CONFIG_HOME=/tmp/.config");
-        expect(envFile).toContain("XDG_DATA_HOME=/tmp/.local/share");
-        expect(envFile).toContain("XDG_STATE_HOME=/tmp/.local/state");
-        expect(envFile).toContain("XDG_RUNTIME_DIR=/tmp/.runtime");
-        expect(envFile).toContain("GNUPGHOME=/tmp/.gnupg");
-        expect(envFile).toContain("PYTHON_HISTORY=/tmp/.python_history");
-        expect(envFile).toContain("npm_config_prefix=/tmp/npm-global");
       } finally {
         try {
           unlinkSync(tmpFile);
@@ -385,10 +319,8 @@ describe("service environment", () => {
               "the _PROXY_URL..chmod block may have been moved or renamed",
           );
         }
-        const toolRedirects = extractToolRedirects();
         const wrapper = [
           "#!/usr/bin/env bash",
-          toolRedirects,
           'PROXY_HOST="10.200.0.1"',
           'PROXY_PORT="3128"',
           persistBlock
@@ -437,11 +369,9 @@ describe("service environment", () => {
               "the _PROXY_URL..chmod block may have been moved or renamed",
           );
         }
-        const toolRedirects = extractToolRedirects();
         const makeWrapper = (host) =>
           [
             "#!/usr/bin/env bash",
-            toolRedirects,
             `PROXY_HOST="${host}"`,
             'PROXY_PORT="3128"',
             persistBlock
@@ -494,10 +424,8 @@ describe("service environment", () => {
         writeFileSync(sensitiveFile, "SECRET_DATA");
         const proxyEnvPath = join(fakeDataDir, "proxy-env.sh");
         execFileSync("ln", ["-sf", sensitiveFile, proxyEnvPath]);
-        const toolRedirects = extractToolRedirects();
         const wrapper = [
           "#!/usr/bin/env bash",
-          toolRedirects,
           'PROXY_HOST="10.200.0.1"',
           'PROXY_PORT="3128"',
           persistBlock.trimEnd().replaceAll("/tmp/nemoclaw-proxy-env.sh", proxyEnvPath),
@@ -585,8 +513,7 @@ describe("service environment", () => {
           `PROXY_HOST="10.200.0.1"`,
           `PROXY_PORT="3128"`,
           `NODE_USE_ENV_PROXY=1`,
-          `_TOOL_REDIRECTS=()`,
-          "set +u  # array expansion safe on macOS bash",
+          "set +u",
           persistBlock
             .trimEnd()
             .replaceAll("/tmp/nemoclaw-proxy-env.sh", `${fakeDataDir}/proxy-env.sh`)
@@ -631,8 +558,7 @@ describe("service environment", () => {
           `PROXY_HOST="10.200.0.1"`,
           `PROXY_PORT="3128"`,
           // NODE_USE_ENV_PROXY intentionally NOT set
-          `_TOOL_REDIRECTS=()`,
-          "set +u  # array expansion safe on macOS bash",
+          "set +u",
           persistBlock
             .trimEnd()
             .replaceAll("/tmp/nemoclaw-proxy-env.sh", `${fakeDataDir}/proxy-env.sh`)

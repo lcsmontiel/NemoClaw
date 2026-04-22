@@ -3,9 +3,10 @@
 //
 // Host-side shields management: down, up, status.
 //
-// Shields provide time-bounded or permanent policy relaxation.
-// Time-bounded shields have automatic restore; permanent shields
-// (--dangerously-skip-permissions) persist until explicitly raised.
+// Config starts mutable (the default state). Shields provide opt-in
+// lockdown: `shields up` locks config + applies a restrictive network
+// policy, `shields down` returns to the default (mutable) state.
+// Time-bounded shields-down has automatic restore via a detached timer.
 // The sandbox cannot lower or raise its own shields — all mutations are
 // host-initiated (security invariant).
 
@@ -71,7 +72,6 @@ interface ShieldsState {
   shieldsDownReason?: string | null;
   shieldsDownPolicy?: string | null;
   shieldsPolicySnapshotPath?: string | null;
-  permanent?: boolean;
   updatedAt?: string;
 }
 
@@ -134,14 +134,12 @@ function killTimer(sandboxName: string): void {
 }
 
 // ---------------------------------------------------------------------------
-// Config unlock — shared between shields-down and dangerously-skip-permissions
+// Config unlock — returns config to the default (mutable) state
 //
 // Sets permissions to sandbox:sandbox 0600/0700, matching what OpenClaw
 // writes natively (mode 384 = 0o600). This keeps `openclaw doctor` happy.
 //
-// Note on chattr: The entrypoint (nemoclaw-start.sh) sets chattr +i on the
-// .openclaw DIRECTORY and its SYMLINKS, but NOT on openclaw.json itself.
-// The chattr -i here is best-effort — it may silently fail if kubectl exec
+// Note on chattr: best-effort — it may silently fail if kubectl exec
 // lacks CAP_LINUX_IMMUTABLE or if the file was never immutable. That's fine:
 // the file becomes writable through the permissive policy (disables Landlock
 // read_only) + chown/chmod below.
@@ -160,7 +158,8 @@ function unlockAgentConfig(sandboxName: string, target: { configPath: string; co
 }
 
 // ---------------------------------------------------------------------------
-// Config lock — shared between shields-up, auto-restore timer, and rollback
+// Config lock — used by shields-up (opt-in lockdown), auto-restore timer,
+// and rollback
 //
 // Each operation runs independently so a single failure does not skip the
 // rest. After all attempts, we verify the actual on-disk state and throw
@@ -171,12 +170,9 @@ function unlockAgentConfig(sandboxName: string, target: { configPath: string; co
 //   2. UNIX permissions — 444 root:root (mandatory, verified here)
 //   3. chattr +i immutable bit — defense-in-depth (best-effort)
 //
-// Layer 3 is best-effort because the entrypoint (nemoclaw-start.sh) only
-// sets chattr +i on the .openclaw directory and its symlinks, not on
-// openclaw.json itself. kubectl exec may also lack CAP_LINUX_IMMUTABLE.
-// The file was never immutable via chattr, so failing to set it is not a
-// regression — layers 1+2 are sufficient. We still attempt it in case the
-// runtime environment supports it.
+// Layer 3 is best-effort because kubectl exec may lack
+// CAP_LINUX_IMMUTABLE. Layers 1+2 are sufficient. We still attempt it
+// in case the runtime environment supports it.
 // ---------------------------------------------------------------------------
 
 function lockAgentConfig(sandboxName: string, target: { configPath: string; configDir: string }): void {
@@ -194,10 +190,8 @@ function lockAgentConfig(sandboxName: string, target: { configPath: string; conf
   try { kubectlExec(sandboxName, ["chown", "root:root", target.configDir]); }
   catch { errors.push("chown root:root config dir"); }
 
-  // Best-effort: the config file was never chattr +i'd by the entrypoint
-  // (only the directory and symlinks were). kubectl exec may also lack
-  // CAP_LINUX_IMMUTABLE. Track the result so verification doesn't require
-  // something that was never there.
+  // Best-effort: kubectl exec may lack CAP_LINUX_IMMUTABLE. Track the
+  // result so verification doesn't require something that was never there.
   let chattrSucceeded = true;
   try { kubectlExec(sandboxName, ["chattr", "+i", target.configPath]); }
   catch {
@@ -250,7 +244,10 @@ function lockAgentConfig(sandboxName: string, target: { configPath: string; conf
 }
 
 // ---------------------------------------------------------------------------
-// shields down
+// shields down — return to default (mutable) state
+//
+// Unlocks config + applies permissive network policy. This is the default
+// operating mode; shields-down undoes a previous shields-up lockdown.
 // ---------------------------------------------------------------------------
 
 interface ShieldsDownOpts {
@@ -262,22 +259,15 @@ interface ShieldsDownOpts {
 function shieldsDown(sandboxName: string, opts: ShieldsDownOpts = {}): void {
   validateName(sandboxName, "sandbox name");
 
-  // Kill any stale timer from a previous shields-down cycle
+  // Kill any stale timer from a previous cycle
   killTimer(sandboxName);
 
   const state = loadShieldsState(sandboxName);
   if (state.shieldsDown) {
-    if (state.permanent) {
-      console.error(
-        `  Shields are permanently DOWN for ${sandboxName} (--dangerously-skip-permissions).`,
-      );
-      console.error("  Run `nemoclaw shields up` first to restore, then try again.");
-    } else {
-      console.error(
-        `  Shields are already DOWN for ${sandboxName} (since ${state.shieldsDownAt}).`,
-      );
-      console.error("  Run `nemoclaw shields up` first, or use --extend (not yet implemented).");
-    }
+    console.error(
+      `  Config is already unlocked for ${sandboxName} (since ${state.shieldsDownAt}).`,
+    );
+    console.error("  Run `nemoclaw shields up` first, or use --extend (not yet implemented).");
     process.exit(1);
   }
 
@@ -320,13 +310,7 @@ function shieldsDown(sandboxName: string, opts: ShieldsDownOpts = {}): void {
   console.log(`  Applying ${policyName} policy...`);
   run(buildPolicySetCommand(policyFile, sandboxName));
 
-  // 2b. Make config file writable inside the sandbox.
-  //     Three layers protect the config: Landlock (read_only), chattr +i
-  //     (immutable bit), and UNIX perms (444 root:root). openshell sandbox exec
-  //     runs inside the Landlock context and can't bypass any of them.
-  //     kubectl exec bypasses Landlock (starts a new process outside the sandbox's
-  //     Landlock domain), so we route through docker exec → kubectl exec.
-  //
+  // 2b. Return config to default mutable state.
   //     Permissions are set to sandbox:sandbox 0600/0700 to match what
   //     OpenClaw natively creates (mode 384 = 0o600) so `openclaw doctor`
   //     sees the expected owner and mode without recommending fixes.
@@ -398,10 +382,10 @@ function shieldsDown(sandboxName: string, opts: ShieldsDownOpts = {}): void {
         shieldsDownReason: null,
         shieldsDownPolicy: null,
       });
-      console.error("  Shields restored to UP. The sandbox was never left unguarded.");
+      console.error("  Lockdown restored. Config was never left unguarded.");
     } else {
       // Leave state as shieldsDown: true — don't lie about protection level
-      console.error("  Shields remain DOWN — manual intervention required.");
+      console.error("  Config remains unlocked — manual intervention required.");
       console.error(`  Re-lock manually via kubectl exec, then run: nemoclaw ${sandboxName} shields up`);
     }
     process.exit(1);
@@ -421,14 +405,17 @@ function shieldsDown(sandboxName: string, opts: ShieldsDownOpts = {}): void {
   // 6. Output
   const mins = Math.floor(timeoutSeconds / 60);
   const secs = timeoutSeconds % 60;
-  console.log(`  Shields DOWN for ${sandboxName} (timeout: ${mins}m${secs ? ` ${secs}s` : ""})`);
+  console.log(`  Config unlocked for ${sandboxName} (auto-lockdown in: ${mins}m${secs ? ` ${secs}s` : ""})`);
   console.log("");
-  console.log("  Warning: Sandbox security is relaxed.");
-  console.log(`  Run \`nemoclaw ${sandboxName} shields up\` when done.`);
+  console.log("  Sandbox is in default (mutable) state.");
+  console.log(`  Run \`nemoclaw ${sandboxName} shields up\` to opt into lockdown.`);
 }
 
 // ---------------------------------------------------------------------------
-// shields up
+// shields up — opt into lockdown
+//
+// Locks config + applies restrictive network policy. This is an opt-in
+// hardening step that restricts the sandbox beyond its default state.
 // ---------------------------------------------------------------------------
 
 function shieldsUp(sandboxName: string): void {
@@ -436,38 +423,30 @@ function shieldsUp(sandboxName: string): void {
 
   const state = loadShieldsState(sandboxName);
   if (!state.shieldsDown) {
-    console.log("  Shields are already UP.");
+    console.log("  Lockdown is already active.");
     return;
   }
 
   const snapshotPath = state.shieldsPolicySnapshotPath;
   if (!snapshotPath || !fs.existsSync(snapshotPath)) {
-    if (state.permanent) {
-      // Permanent shields may not have a snapshot (best-effort capture).
-      // Warn but proceed — re-lock the config and clear the state.
-      console.error("  No policy snapshot found. Skipping policy restore.");
-      console.error("  You may need to re-apply your intended policy manually.");
-    } else {
-      console.error("  No policy snapshot found. Cannot restore — manual intervention required.");
-      console.error("  Apply your intended policy with: openshell policy set --policy <file>");
-      process.exit(1);
-    }
+    console.error("  No policy snapshot found. Cannot restore — manual intervention required.");
+    console.error("  Apply your intended policy with: openshell policy set --policy <file>");
+    process.exit(1);
   }
 
   // 1. Kill auto-restore timer if running
   killTimer(sandboxName);
 
-  // 2. Restore policy from snapshot (if available)
+  // 2. Restore policy from snapshot
   if (snapshotPath && fs.existsSync(snapshotPath)) {
-    console.log("  Restoring policy from snapshot...");
+    console.log("  Restoring restrictive policy from snapshot...");
     run(buildPolicySetCommand(snapshotPath, sandboxName));
   }
 
-  // 2b. Re-lock config file to read-only.
-  //     Restore the Dockerfile's original permissions and immutable bit.
+  // 2b. Lock config file to read-only.
   //     Uses kubectl exec to bypass Landlock (same as shields down).
   //     Each operation runs independently and the result is verified.
-  //     If verification fails, shields remain DOWN — we do not lie about state.
+  //     If verification fails, config remains unlocked — we do not lie about state.
   const target = resolveAgentConfig(sandboxName);
   console.log(`  Locking ${target.agentName} config (${target.configPath})...`);
   try {
@@ -475,7 +454,7 @@ function shieldsUp(sandboxName: string): void {
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : String(err);
     console.error(`  ERROR: ${message}`);
-    console.error("  Shields remain DOWN — manual intervention required.");
+    console.error("  Config remains unlocked — manual intervention required.");
     console.error(`  Re-lock manually via kubectl exec, then run: nemoclaw ${sandboxName} shields up`);
     process.exit(1);
   }
@@ -492,7 +471,6 @@ function shieldsUp(sandboxName: string): void {
     shieldsDownTimeout: null,
     shieldsDownReason: null,
     shieldsDownPolicy: null,
-    permanent: false,
     // Keep snapshotPath for forensics — don't clear it
   });
 
@@ -510,8 +488,8 @@ function shieldsUp(sandboxName: string): void {
   // 6. Output
   const mins = Math.floor(durationSeconds / 60);
   const secs = durationSeconds % 60;
-  console.log(`  Shields UP for ${sandboxName}`);
-  console.log(`  Duration: ${mins}m ${secs}s | Reason: ${state.shieldsDownReason ?? "not specified"}`);
+  console.log(`  Lockdown active for ${sandboxName}`);
+  console.log(`  Duration unlocked: ${mins}m ${secs}s | Reason: ${state.shieldsDownReason ?? "not specified"}`);
 }
 
 // ---------------------------------------------------------------------------
@@ -524,10 +502,10 @@ function shieldsStatus(sandboxName: string): void {
   const state = loadShieldsState(sandboxName);
 
   if (!state.shieldsDown) {
-    console.log("  Shields: UP");
-    console.log(`  Policy:  default${state.shieldsPolicySnapshotPath ? " (last snapshot preserved)" : ""}`);
+    console.log("  Shields: UP (lockdown active)");
+    console.log(`  Policy:  restrictive${state.shieldsPolicySnapshotPath ? " (snapshot preserved)" : ""}`);
     if (state.shieldsDownAt) {
-      console.log(`  Last lowered: ${state.shieldsDownAt}`);
+      console.log(`  Last unlocked: ${state.shieldsDownAt}`);
     }
     return;
   }
@@ -539,100 +517,15 @@ function shieldsStatus(sandboxName: string): void {
       ? Math.max(0, state.shieldsDownTimeout - elapsed)
       : null;
 
-  console.log(`  Shields: DOWN${state.permanent ? " (permanent)" : ""}`);
+  console.log("  Shields: DOWN (default mutable state)");
   console.log(`  Since:   ${state.shieldsDownAt ?? "unknown"}`);
-  if (state.permanent) {
-    console.log("  Timeout: none (--dangerously-skip-permissions)");
-  } else if (remaining !== null) {
+  if (remaining !== null) {
     const mins = Math.floor(remaining / 60);
     const secs = remaining % 60;
-    console.log(`  Timeout: ${mins}m ${secs}s remaining`);
+    console.log(`  Auto-lockdown in: ${mins}m ${secs}s`);
   }
   console.log(`  Reason:  ${state.shieldsDownReason ?? "not specified"}`);
   console.log(`  Policy:  ${state.shieldsDownPolicy ?? "permissive"}`);
-}
-
-// ---------------------------------------------------------------------------
-// shields down permanent — used by --dangerously-skip-permissions
-//
-// Puts the sandbox into permanent shields-down state: permissive policy,
-// config file unlocked with doctor-aligned permissions, no auto-restore.
-// Idempotent — safe to call on every connect when the registry flag is set.
-// ---------------------------------------------------------------------------
-
-function shieldsDownPermanent(sandboxName: string): void {
-  validateName(sandboxName, "sandbox name");
-
-  const state = loadShieldsState(sandboxName);
-
-  // Already permanently down — idempotent no-op.
-  if (state.shieldsDown && state.permanent) {
-    return;
-  }
-
-  // If shields are down with a timer, kill the timer and upgrade to permanent.
-  if (state.shieldsDown && !state.permanent) {
-    killTimer(sandboxName);
-    saveShieldsState(sandboxName, {
-      permanent: true,
-      shieldsDownTimeout: null,
-      shieldsDownReason: "dangerously-skip-permissions (upgraded from timed)",
-    });
-
-    appendAuditEntry({
-      action: "shields_down_permanent",
-      sandbox: sandboxName,
-      timestamp: new Date().toISOString(),
-      reason: "upgraded from timed to permanent (--dangerously-skip-permissions)",
-    });
-    return;
-  }
-
-  // Shields are up — do the full shields-down sequence without a timer.
-
-  // 1. Capture current policy snapshot (for shields-up restore later)
-  let snapshotPath: string | null = null;
-  try {
-    const rawPolicy = runCapture(buildPolicyGetCommand(sandboxName), { ignoreError: true });
-    const policyYaml = parseCurrentPolicy(rawPolicy);
-    if (policyYaml) {
-      const ts = Date.now();
-      snapshotPath = path.join(STATE_DIR, `policy-snapshot-${ts}.yaml`);
-      fs.mkdirSync(STATE_DIR, { recursive: true, mode: 0o700 });
-      fs.writeFileSync(snapshotPath, policyYaml, { mode: 0o600 });
-    }
-  } catch {
-    // Non-fatal — snapshot is best-effort for permanent mode
-  }
-
-  // 2. Apply permissive policy
-  const policies = require("./policies");
-  policies.applyPermissivePolicy(sandboxName);
-
-  // 3. Unlock config with doctor-aligned permissions
-  const target = resolveAgentConfig(sandboxName);
-  unlockAgentConfig(sandboxName, target);
-
-  // 4. Save permanent shields-down state
-  const now = new Date().toISOString();
-  saveShieldsState(sandboxName, {
-    shieldsDown: true,
-    shieldsDownAt: now,
-    shieldsDownTimeout: null,
-    shieldsDownReason: "dangerously-skip-permissions",
-    shieldsDownPolicy: "permissive",
-    shieldsPolicySnapshotPath: snapshotPath,
-    permanent: true,
-  });
-
-  // 5. Audit log
-  appendAuditEntry({
-    action: "shields_down_permanent",
-    sandbox: sandboxName,
-    timestamp: now,
-    reason: "dangerously-skip-permissions",
-    policy_snapshot: snapshotPath ?? undefined,
-  });
 }
 
 // ---------------------------------------------------------------------------
@@ -649,7 +542,6 @@ function isShieldsDown(sandboxName: string): boolean {
 
 export {
   shieldsDown,
-  shieldsDownPermanent,
   shieldsUp,
   shieldsStatus,
   isShieldsDown,

@@ -49,7 +49,8 @@ export interface RebuildManifest {
   agentVersion: string | null;
   expectedVersion: string | null;
   stateDirs: string[];
-  writableDir: string;
+  /** Single config/state directory */
+  dir: string;
   backupPath: string;
   blueprintDigest: string | null;
   policyPresets?: string[];
@@ -390,9 +391,9 @@ export function backupSandboxState(sandboxName: string): BackupResult {
   const sb = registry.getSandbox(sandboxName);
   const agentName = sb?.agent || "openclaw";
   const agent = loadAgent(agentName);
-  const writableDir = agent.configPaths.writableDir;
+  const dir = agent.configPaths.dir;
   const stateDirs = agent.stateDirs;
-  _log(`backupSandboxState: agent=${agentName}, writableDir=${writableDir}, stateDirs=[${stateDirs.join(",")}]`);
+  _log(`backupSandboxState: agent=${agentName}, dir=${dir}, stateDirs=[${stateDirs.join(",")}]`);
 
   const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
   const backupPath = path.join(REBUILD_BACKUPS_DIR, sandboxName, timestamp);
@@ -414,7 +415,7 @@ export function backupSandboxState(sandboxName: string): BackupResult {
     agentVersion: sb?.agentVersion || null,
     expectedVersion: agent.expectedVersion,
     stateDirs,
-    writableDir,
+    dir,
     backupPath,
     blueprintDigest: computeBlueprintDigest(),
     policyPresets,
@@ -443,7 +444,7 @@ export function backupSandboxState(sandboxName: string): BackupResult {
     // Build tar command that only includes existing directories
     // First, check which state dirs actually exist in the sandbox
     const existCheckCmd = stateDirs
-      .map((d) => `[ -d "${writableDir}/${d}" ] && echo "${d}"`)
+      .map((d) => `[ -d "${dir}/${d}" ] && echo "${d}"`)
       .join("; ");
     _log(`Checking existing dirs via SSH: ${existCheckCmd.substring(0, 100)}...`);
     const existResult = spawnSync(
@@ -470,7 +471,7 @@ export function backupSandboxState(sandboxName: string): BackupResult {
     }
 
     // Download via SSH+tar
-    const tarCmd = `tar -cf - -C ${writableDir} ${existingDirs.join(" ")}`;
+    const tarCmd = `tar -cf - -C ${dir} ${existingDirs.join(" ")}`;
     _log(`Downloading via SSH+tar: ${tarCmd}`);
     const result = spawnSync(
       "ssh",
@@ -525,7 +526,7 @@ export function restoreSandboxState(
     return { success: false, restoredDirs: [], failedDirs: ["manifest"] };
   }
 
-  const writableDir = manifest.writableDir;
+  const dir = manifest.dir;
   const restoredDirs: string[] = [];
   const failedDirs: string[] = [];
 
@@ -563,7 +564,7 @@ export function restoreSandboxState(
     // Remove existing state dirs before extracting so stale files from
     // later snapshots don't persist after restoring an earlier one.
     const rmCmd = localDirs
-      .map((d) => `rm -rf "${writableDir}/${d}"`)
+      .map((d) => `rm -rf "${dir}/${d}"`)
       .join(" && ");
     _log(`Cleaning target dirs before restore: ${rmCmd}`);
     const rmResult = spawnSync(
@@ -575,7 +576,7 @@ export function restoreSandboxState(
       _log(`WARNING: pre-restore cleanup failed (exit ${rmResult.status}): ${(rmResult.stderr?.toString() || "").substring(0, 200)}`);
     }
 
-    const extractCmd = `tar -xf - -C ${writableDir}`;
+    const extractCmd = `tar -xf - -C ${dir}`;
     const sshResult = spawnSync(
       "ssh",
       [...sshArgs(configFile, sandboxName), extractCmd],
@@ -589,10 +590,10 @@ export function restoreSandboxState(
       // ownership means the agent can't read its own state files.
       const openshellBinary = resolveOpenshell();
       if (openshellBinary) {
-        _log(`Fixing ownership: chown -R sandbox:sandbox ${writableDir}`);
+        _log(`Fixing ownership: chown -R sandbox:sandbox ${dir}`);
         const chownResult = spawnSync(openshellBinary, [
           "sandbox", "exec", sandboxName, "--",
-          "chown", "-R", "sandbox:sandbox", writableDir,
+          "chown", "-R", "sandbox:sandbox", dir,
         ], { stdio: ["ignore", "pipe", "pipe"], timeout: 30000 });
         if (chownResult.status !== 0) {
           _log(`WARNING: chown failed (exit ${chownResult.status}) — agent may not be able to read restored state`);

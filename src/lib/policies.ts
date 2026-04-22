@@ -629,14 +629,9 @@ function applyPermissivePolicy(sandboxName) {
     throw new Error(`Permissive policy not found: ${policyPath}`);
   }
 
-  console.log("  Applying permissive policy (--dangerously-skip-permissions)...");
+  console.log("  Applying permissive policy...");
   run(buildPolicySetCommand(policyPath, sandboxName));
   console.log("  Applied permissive policy.");
-
-  const sandbox = registry.getSandbox(sandboxName);
-  if (sandbox) {
-    registry.updateSandbox(sandboxName, { dangerouslySkipPermissions: true });
-  }
 }
 
 export {

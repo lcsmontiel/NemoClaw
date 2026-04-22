@@ -25,9 +25,9 @@
 set -euo pipefail
 
 SANDBOX_NAME="${NEMOCLAW_SANDBOX_NAME:-e2e-snapshot}"
-MARKER_FILE="/sandbox/.openclaw-data/workspace/snapshot-marker.txt"
+MARKER_FILE="/sandbox/.openclaw/workspace/snapshot-marker.txt"
 MARKER_CONTENT="SNAPSHOT_E2E_$(date +%s)"
-SECOND_MARKER="/sandbox/.openclaw-data/workspace/snapshot-marker-2.txt"
+SECOND_MARKER="/sandbox/.openclaw/workspace/snapshot-marker-2.txt"
 SECOND_CONTENT="SNAPSHOT_E2E_SECOND_$(date +%s)"
 
 RED='\033[0;31m'
@@ -90,7 +90,7 @@ pass "NemoClaw installed"
 info "Phase 2: Writing marker files into sandbox..."
 
 openshell sandbox exec --name "${SANDBOX_NAME}" -- \
-  sh -c "mkdir -p /sandbox/.openclaw-data/workspace && echo '${MARKER_CONTENT}' > ${MARKER_FILE}" \
+  sh -c "mkdir -p /sandbox/.openclaw/workspace && echo '${MARKER_CONTENT}' > ${MARKER_FILE}" \
   || fail "Failed to write marker file"
 
 VERIFY=$(openshell sandbox exec --name "${SANDBOX_NAME}" -- cat "${MARKER_FILE}" 2>/dev/null || true)

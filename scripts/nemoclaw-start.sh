@@ -45,55 +45,6 @@ fi
 # into commands executed by the entrypoint or auto-pair watcher.
 export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 
-# Redirect tool caches and state to /tmp so they don't fail on the read-only
-# /sandbox home directory (#804). Without these, tools would try to create
-# dotfiles (~/.npm, ~/.cache, ~/.bash_history, ~/.gitconfig, ~/.local, ~/.claude)
-# in the Landlock read-only home and fail.
-#
-# IMPORTANT: This array is the single source of truth for tool-cache redirects.
-# The same entries are emitted into /tmp/nemoclaw-proxy-env.sh (see below) so
-# that `openshell sandbox connect` sessions also pick up the redirects.
-_TOOL_REDIRECTS=(
-  'npm_config_cache=/tmp/.npm-cache'
-  'XDG_CACHE_HOME=/tmp/.cache'
-  'XDG_CONFIG_HOME=/tmp/.config'
-  'XDG_DATA_HOME=/tmp/.local/share'
-  'XDG_STATE_HOME=/tmp/.local/state'
-  'XDG_RUNTIME_DIR=/tmp/.runtime'
-  'NODE_REPL_HISTORY=/tmp/.node_repl_history'
-  'HISTFILE=/tmp/.bash_history'
-  'GIT_CONFIG_GLOBAL=/tmp/.gitconfig'
-  'GNUPGHOME=/tmp/.gnupg'
-  'PYTHONUSERBASE=/tmp/.local'
-  'PYTHON_HISTORY=/tmp/.python_history'
-  'CLAUDE_CONFIG_DIR=/tmp/.claude'
-  'npm_config_prefix=/tmp/npm-global'
-)
-for _redir in "${_TOOL_REDIRECTS[@]}"; do
-  export "${_redir?}"
-done
-
-# Pre-create redirected directories to prevent ownership conflicts.
-# In root mode: the gateway starts first (as gateway user) and inherits these
-# env vars — if it creates a dir first, it would be gateway:gateway 755 and
-# the sandbox user couldn't write subdirs later. Creating them as root with
-# explicit sandbox ownership ensures the sandbox user always has write access.
-# In non-root mode: we're already the sandbox user, so mkdir -p is sufficient —
-# directories are owned by us automatically. Using install -o would fail with
-# EPERM because only root can chown. Ref: #804
-if [ "$(id -u)" -eq 0 ]; then
-  install -d -o sandbox -g sandbox -m 755 \
-    /tmp/.npm-cache /tmp/.cache /tmp/.config /tmp/.local/share \
-    /tmp/.local/state /tmp/.runtime /tmp/.claude \
-    /tmp/npm-global
-  install -d -o sandbox -g sandbox -m 700 /tmp/.gnupg
-else
-  mkdir -p /tmp/.npm-cache /tmp/.cache /tmp/.config /tmp/.local/share \
-    /tmp/.local/state /tmp/.runtime /tmp/.claude \
-    /tmp/npm-global
-  install -d -m 700 /tmp/.gnupg
-fi
-
 # ── Drop unnecessary Linux capabilities ──────────────────────────
 # CIS Docker Benchmark 5.3: containers should not run with default caps.
 # OpenShell manages the container runtime so we cannot pass --cap-drop=ALL
@@ -207,13 +158,11 @@ verify_config_integrity() {
 # ── Runtime model/provider override ──────────────────────────────
 # Patches openclaw.json at startup when NEMOCLAW_MODEL_OVERRIDE is set,
 # allowing model or provider changes without rebuilding the sandbox image.
-# Runs AFTER integrity check (detects build-time tampering) and BEFORE
-# chattr +i (locks the file permanently). Recomputes the config hash so
-# future integrity checks pass.
+# Runs AFTER integrity check (detects build-time tampering). Recomputes
+# the config hash so future integrity checks pass.
 #
 # SECURITY: These env vars come from the host (Docker/OpenShell), not from
-# inside the sandbox. The agent cannot set them. Landlock locks the file
-# after this function runs. Same trust model as NEMOCLAW_LOCAL_INFERENCE_TIMEOUT.
+# inside the sandbox. The agent cannot set them.
 # Ref: https://github.com/NVIDIA/NemoClaw/issues/759
 
 apply_model_override() {
@@ -637,52 +586,6 @@ GUARD
   done
 }
 
-validate_openclaw_symlinks() {
-  local entry name target expected
-  for entry in /sandbox/.openclaw/*; do
-    [ -L "$entry" ] || continue
-    name="$(basename "$entry")"
-    target="$(readlink -f "$entry" 2>/dev/null || true)"
-    expected="/sandbox/.openclaw-data/$name"
-    if [ "$target" != "$expected" ]; then
-      echo "[SECURITY] Symlink $entry points to unexpected target: $target (expected $expected)" >&2
-      return 1
-    fi
-  done
-}
-
-harden_openclaw_symlinks() {
-  local entry hardened failed
-  hardened=0
-  failed=0
-
-  if ! command -v chattr >/dev/null 2>&1; then
-    echo "[SECURITY] chattr not available — relying on DAC + Landlock for .openclaw hardening" >&2
-    return 0
-  fi
-
-  if chattr +i /sandbox/.openclaw 2>/dev/null; then
-    hardened=$((hardened + 1))
-  else
-    failed=$((failed + 1))
-  fi
-
-  for entry in /sandbox/.openclaw/*; do
-    [ -L "$entry" ] || continue
-    if chattr +i "$entry" 2>/dev/null; then
-      hardened=$((hardened + 1))
-    else
-      failed=$((failed + 1))
-    fi
-  done
-
-  if [ "$failed" -gt 0 ]; then
-    echo "[SECURITY] Immutable hardening applied to $hardened path(s); $failed path(s) could not be hardened — continuing with DAC + Landlock" >&2
-  elif [ "$hardened" -gt 0 ]; then
-    echo "[SECURITY] Immutable hardening applied to /sandbox/.openclaw and validated symlinks" >&2
-  fi
-}
-
 # Write an auth profile JSON for the NVIDIA API key so the gateway can authenticate.
 write_auth_profile() {
   if [ -z "${NVIDIA_API_KEY:-}" ]; then
@@ -910,11 +813,6 @@ PROXYEOF
   if [ -f "$_AXIOS_FIX_SCRIPT" ] && [ "${NODE_USE_ENV_PROXY:-}" = "1" ]; then
     echo "export NODE_OPTIONS=\"\${NODE_OPTIONS:+\$NODE_OPTIONS }--require $_AXIOS_FIX_SCRIPT\""
   fi
-  # Tool cache redirects — generated from _TOOL_REDIRECTS (single source of truth)
-  echo '# Tool cache redirects — /sandbox is Landlock read-only (#804)'
-  for _redir in "${_TOOL_REDIRECTS[@]}"; do
-    echo "export ${_redir?}"
-  done
 } >"$_PROXY_ENV_FILE"
 chmod 644 "$_PROXY_ENV_FILE"
 
@@ -969,68 +867,25 @@ if [ "$(id -u)" -ne 0 ]; then
   export_gateway_token
   install_configure_guard
   configure_messaging_channels
-  validate_openclaw_symlinks
 
   # Ensure writable state directories exist and are owned by the current user.
   # The Docker build (Dockerfile) sets this up correctly, but the native curl
   # installer may create these directories as root, causing EACCES when openclaw
   # tries to write device-auth.json or other state files.  Ref: #692
-  # Ensure the identity symlink points from .openclaw/identity → .openclaw-data/identity.
-  # Uses early returns to keep each case flat.
-  ensure_identity_symlink() {
-    local data_dir="$1" openclaw_dir="$2"
-    local link_path="${openclaw_dir}/identity"
-    local target="${data_dir}/identity"
-    [ -d "$target" ] || return 0
-    mkdir -p "${openclaw_dir}" 2>/dev/null || true
-
-    # Already a correct symlink — nothing to do.
-    if [ -L "$link_path" ]; then
-      local current expected
-      current="$(readlink -f "$link_path" 2>/dev/null || true)"
-      expected="$(readlink -f "$target" 2>/dev/null || true)"
-      [ "$current" != "$expected" ] || return 0
-      ln -snf "$target" "$link_path" 2>/dev/null \
-        && echo "[setup] repaired identity symlink" >&2 \
-        || echo "[setup] could not repair identity symlink" >&2
-      return 0
-    fi
-
-    # Nothing exists yet — create the symlink.
-    if [ ! -e "$link_path" ]; then
-      ln -snf "$target" "$link_path" 2>/dev/null \
-        && echo "[setup] created identity symlink" >&2 \
-        || echo "[setup] could not create identity symlink" >&2
-      return 0
-    fi
-
-    # A non-symlink entry exists — back it up, then replace.
-    local backup
-    backup="${link_path}.bak.$(date +%s)"
-    if mv "$link_path" "$backup" 2>/dev/null \
-      && ln -snf "$target" "$link_path" 2>/dev/null; then
-      echo "[setup] replaced non-symlink identity path (backup: ${backup})" >&2
-    else
-      echo "[setup] could not replace ${link_path}; writes may fail" >&2
-    fi
-  }
-
-  fix_openclaw_data_ownership() {
-    local data_dir="${HOME}/.openclaw-data"
+  fix_openclaw_ownership() {
     local openclaw_dir="${HOME}/.openclaw"
-    [ -d "$data_dir" ] || return 0
-    local subdirs="agents/main/agent extensions workspace skills hooks identity devices canvas cron"
+    [ -d "$openclaw_dir" ] || return 0
+    local subdirs="agents/main/agent extensions workspace skills hooks identity devices canvas cron logs credentials sandbox media"
     for sub in $subdirs; do
-      mkdir -p "${data_dir}/${sub}" 2>/dev/null || true
+      mkdir -p "${openclaw_dir}/${sub}" 2>/dev/null || true
     done
-    if find "$data_dir" ! -uid "$(id -u)" -print -quit 2>/dev/null | grep -q .; then
-      chown -R "$(id -u):$(id -g)" "$data_dir" 2>/dev/null \
-        && echo "[setup] fixed ownership on ${data_dir}" >&2 \
-        || echo "[setup] could not fix ownership on ${data_dir}; writes may fail" >&2
+    if find "$openclaw_dir" ! -uid "$(id -u)" -print -quit 2>/dev/null | grep -q .; then
+      chown -R "$(id -u):$(id -g)" "$openclaw_dir" 2>/dev/null \
+        && echo "[setup] fixed ownership on ${openclaw_dir}" >&2 \
+        || echo "[setup] could not fix ownership on ${openclaw_dir}; writes may fail" >&2
     fi
-    ensure_identity_symlink "$data_dir" "$openclaw_dir"
   }
-  fix_openclaw_data_ownership
+  fix_openclaw_ownership
   write_auth_profile
   harden_auth_profiles
 
@@ -1079,8 +934,8 @@ configure_messaging_channels
 # the gateway inherits them from the process environment.
 unset SLACK_BOT_TOKEN SLACK_APP_TOKEN
 
-# Write auth profile as sandbox user (needs writable .openclaw-data)
-# and recursively re-tighten any auth-profiles.json files under ~/.openclaw.
+# Write auth profile as sandbox user and recursively re-tighten any
+# auth-profiles.json files under ~/.openclaw.
 gosu sandbox bash -c "$(declare -f write_auth_profile harden_auth_profiles); write_auth_profile; harden_auth_profiles"
 
 # If a command was passed (e.g., "openclaw agent ..."), run it as sandbox user
@@ -1097,17 +952,6 @@ chmod 600 /tmp/gateway.log
 touch /tmp/auto-pair.log
 chown sandbox:sandbox /tmp/auto-pair.log
 chmod 600 /tmp/auto-pair.log
-
-# Verify ALL symlinks in .openclaw point to expected .openclaw-data targets.
-# Dynamic scan so future OpenClaw symlinks are covered automatically.
-validate_openclaw_symlinks
-
-# Lock .openclaw directory after symlink validation: set the immutable flag
-# so symlinks cannot be swapped at runtime even if DAC or Landlock are
-# bypassed. chattr requires cap_linux_immutable which the entrypoint has
-# as root; the sandbox user cannot remove the flag.
-# Ref: https://github.com/NVIDIA/NemoClaw/issues/1019
-harden_openclaw_symlinks
 
 # Start the gateway as the 'gateway' user.
 # SECURITY: The sandbox user cannot kill this process because it runs

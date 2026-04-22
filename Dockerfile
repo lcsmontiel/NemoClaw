@@ -221,8 +221,8 @@ WORKDIR /sandbox
 USER sandbox
 
 # Write the COMPLETE openclaw.json including gateway config and auth token.
-# This file is immutable at runtime (Landlock read-only on /sandbox/.openclaw).
-# No runtime writes to openclaw.json are needed or possible.
+# Config is mutable by default (600 sandbox:sandbox). Immutability is opt-in
+# via `shields up` (DAC 444 root:root + chattr +i).
 # Build args (NEMOCLAW_MODEL, CHAT_UI_URL) customize per deployment.
 # Auth token is generated per build so each image has a unique token.
 RUN python3 -c "\
@@ -296,87 +296,26 @@ os.chmod(path, 0o600)"
 RUN openclaw doctor --fix > /dev/null 2>&1 || true \
     && openclaw plugins install /opt/nemoclaw > /dev/null 2>&1 || true
 
-# Lock openclaw.json via DAC: chown to root so the sandbox user cannot modify
-# it at runtime.  This works regardless of Landlock enforcement status.
-# The Landlock policy (/sandbox/.openclaw in read_only) provides defense-in-depth
-# once OpenShell enables enforcement.
-# Ref: https://github.com/NVIDIA/NemoClaw/issues/514
-# Lock the entire .openclaw directory tree.
-# SECURITY: chmod 755 (not 1777) — the sandbox user can READ but not WRITE
-# to this directory. This prevents the agent from replacing symlinks
-# (e.g., pointing /sandbox/.openclaw/hooks to an attacker-controlled path).
-# The writable state lives in .openclaw-data, reached via the symlinks.
+# Ensure state subdirectories exist inside .openclaw.
 # hadolint ignore=DL3002
 USER root
+RUN mkdir -p /sandbox/.openclaw/logs \
+        /sandbox/.openclaw/credentials \
+        /sandbox/.openclaw/sandbox \
+        /sandbox/.openclaw/media \
+    && rm -rf /root/.npm /sandbox/.npm
 
-# Ensure .openclaw-data subdirs and symlinks exist for logs, credentials, and
-# sandbox. These are defined in Dockerfile.base but the GHCR base image may
-# not have been rebuilt yet. Idempotent — harmless once the base catches up.
-# Ref: https://github.com/NVIDIA/NemoClaw/issues/804
-RUN mkdir -p /sandbox/.openclaw-data/logs \
-        /sandbox/.openclaw-data/credentials \
-        /sandbox/.openclaw-data/sandbox \
-        /sandbox/.openclaw-data/media \
-    && chown sandbox:sandbox /sandbox/.openclaw-data/logs \
-        /sandbox/.openclaw-data/credentials \
-        /sandbox/.openclaw-data/sandbox \
-        /sandbox/.openclaw-data/media \
-    && for dir in logs credentials sandbox media; do \
-        if [ -L "/sandbox/.openclaw/$dir" ]; then true; \
-        elif [ -e "/sandbox/.openclaw/$dir" ]; then \
-            cp -a "/sandbox/.openclaw/$dir/." "/sandbox/.openclaw-data/$dir/" 2>/dev/null || true; \
-            rm -rf "/sandbox/.openclaw/$dir"; \
-            ln -s "/sandbox/.openclaw-data/$dir" "/sandbox/.openclaw/$dir"; \
-        else \
-            ln -s "/sandbox/.openclaw-data/$dir" "/sandbox/.openclaw/$dir"; \
-        fi; \
-    done \
-    && if [ -e /sandbox/.openclaw-data/workspace/media ] && [ ! -L /sandbox/.openclaw-data/workspace/media ]; then \
-        rm -rf /sandbox/.openclaw-data/workspace/media; \
-    fi \
-    && ln -sfn /sandbox/.openclaw-data/media /sandbox/.openclaw-data/workspace/media
-
-# Ensure exec approvals path compatibility when using a stale published base
-# image that still points to ~/.openclaw/exec-approvals.json.
-RUN OPENCLAW_DIST_DIR="$(npm root -g)/openclaw/dist" \
-    && if [ ! -d "$OPENCLAW_DIST_DIR" ]; then \
-        echo "Error: OpenClaw dist directory not found: $OPENCLAW_DIST_DIR"; \
-        exit 1; \
-    fi \
-    && mkdir -p /sandbox/.openclaw-data \
-    && chown sandbox:sandbox /sandbox/.openclaw-data \
-    && chmod 755 /sandbox/.openclaw-data \
-    && LEGACY_EXEC_APPROVALS_PATH="$(printf '%b' '\176/.openclaw/exec-approvals.json')" \
-    && DATA_EXEC_APPROVALS_PATH="$(printf '%b' '\176/.openclaw-data/exec-approvals.json')" \
-    && files_with_old_path="$(grep -R --include='*.js' -l "$LEGACY_EXEC_APPROVALS_PATH" "$OPENCLAW_DIST_DIR" || true)" \
-    && if [ -n "$files_with_old_path" ]; then \
-        files_with_old_path_file="$(mktemp)"; \
-        printf '%s\n' "$files_with_old_path" > "$files_with_old_path_file"; \
-        while IFS= read -r file; do \
-            sed -i "s#${LEGACY_EXEC_APPROVALS_PATH}#${DATA_EXEC_APPROVALS_PATH}#g" "$file"; \
-        done < "$files_with_old_path_file"; \
-        rm -f "$files_with_old_path_file"; \
-    elif ! grep -R --include='*.js' -q "$DATA_EXEC_APPROVALS_PATH" "$OPENCLAW_DIST_DIR"; then \
-        echo "Error: Unable to verify OpenClaw exec approvals path in dist"; \
-        exit 1; \
-    fi \
-    && if grep -R --include='*.js' -n "$LEGACY_EXEC_APPROVALS_PATH" "$OPENCLAW_DIST_DIR"; then \
-        echo "Error: OpenClaw exec approvals path patch failed"; \
-        exit 1; \
-    fi
-
-RUN chown root:root /sandbox/.openclaw \
-    && rm -rf /root/.npm /sandbox/.npm \
-    && find /sandbox/.openclaw -mindepth 1 -maxdepth 1 -exec chown -h root:root {} + \
-    && chmod 755 /sandbox/.openclaw \
-    && chmod 444 /sandbox/.openclaw/openclaw.json
+# Set mutable-default permissions (600/700 sandbox:sandbox).
+# This is what `openclaw doctor` expects and what shields-down restores.
+# Shields-up applies 444 root:root + chattr +i on top.
+RUN chown -R sandbox:sandbox /sandbox/.openclaw \
+    && chmod 700 /sandbox/.openclaw \
+    && chmod 600 /sandbox/.openclaw/openclaw.json
 
 # Pin config hash at build time so the entrypoint can verify integrity.
-# Prevents the agent from creating a copy with a tampered config and
-# restarting the gateway pointing at it.
 RUN sha256sum /sandbox/.openclaw/openclaw.json > /sandbox/.openclaw/.config-hash \
-    && chmod 444 /sandbox/.openclaw/.config-hash \
-    && chown root:root /sandbox/.openclaw/.config-hash
+    && chmod 600 /sandbox/.openclaw/.config-hash \
+    && chown sandbox:sandbox /sandbox/.openclaw/.config-hash
 
 # DAC-protect .nemoclaw directory: /sandbox/.nemoclaw is Landlock read_write
 # (for plugin state/config), but the parent and blueprints are immutable at

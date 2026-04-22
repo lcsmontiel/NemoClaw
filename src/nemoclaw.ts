@@ -869,17 +869,6 @@ function exitWithSpawnResult(result) {
   process.exit(1);
 }
 
-function printDangerouslySkipPermissionsWarning() {
-  console.error("");
-  console.error(
-    "  \u26a0  --dangerously-skip-permissions: sandbox security restrictions disabled.",
-  );
-  console.error("     Network:    all known endpoints open (no method/path filtering)");
-  console.error("     Filesystem: sandbox home directory is writable");
-  console.error("     Use for development/testing only.");
-  console.error("");
-}
-
 // ── Commands ─────────────────────────────────────────────────────
 
 function buildOnboardCommandDeps(args) {
@@ -1211,7 +1200,7 @@ async function listSandboxes() {
 
 // ── Sandbox-scoped actions ───────────────────────────────────────
 
-async function sandboxConnect(sandboxName, { dangerouslySkipPermissions = false } = {}) {
+async function sandboxConnect(sandboxName) {
   const { isSandboxReady, parseSandboxStatus } = require("./lib/onboard");
   await ensureLiveSandboxOrExit(sandboxName, { allowNonReadyPhase: true });
 
@@ -1243,15 +1232,6 @@ async function sandboxConnect(sandboxName, { dangerouslySkipPermissions = false 
     /* non-fatal — don't block connect on session detection failure */
   }
 
-  // Check both the CLI flag and the registry for dangerously-skip-permissions.
-  // The registry flag persists from onboard, so subsequent connects without
-  // the CLI flag still enter permanent shields-down state.
-  const sb = registry.getSandbox(sandboxName);
-  const effectiveSkipPerms = dangerouslySkipPermissions || sb?.dangerouslySkipPermissions;
-  if (effectiveSkipPerms) {
-    printDangerouslySkipPermissionsWarning();
-    shields.shieldsDownPermanent(sandboxName);
-  }
   checkAndRecoverSandboxProcesses(sandboxName);
   // Ensure Ollama auth proxy is running (recovers from host reboots)
   ensureOllamaAuthProxy();
@@ -1440,9 +1420,7 @@ async function sandboxStatus(sandboxName) {
       /* non-fatal */
     }
 
-    if (sb.dangerouslySkipPermissions) {
-      console.log(`    Permissions: dangerously-skip-permissions (shields permanently down)`);
-    } else if (shields.isShieldsDown(sandboxName)) {
+    if (shields.isShieldsDown(sandboxName)) {
       console.log(`    Permissions: shields down (check \`shields status\` for details)`);
     }
 
@@ -3001,9 +2979,7 @@ const [cmd, ...args] = process.argv.slice(2);
 
     switch (action) {
       case "connect":
-        await sandboxConnect(cmd, {
-          dangerouslySkipPermissions: actionArgs.includes("--dangerously-skip-permissions"),
-        });
+        await sandboxConnect(cmd);
         break;
       case "status":
         await sandboxStatus(cmd);
@@ -3117,30 +3093,8 @@ const [cmd, ...args] = process.argv.slice(2);
             sandboxConfig.configGet(cmd, configOpts);
             break;
           }
-          case "set": {
-            const setOpts = { key: null, value: null, restart: false };
-            for (let i = 1; i < actionArgs.length; i++) {
-              if (actionArgs[i] === "--key") setOpts.key = actionArgs[++i];
-              else if (actionArgs[i] === "--value") setOpts.value = actionArgs[++i];
-              else if (actionArgs[i] === "--restart") setOpts.restart = true;
-            }
-            sandboxConfig.configSet(cmd, setOpts);
-            break;
-          }
-          case "rotate-token": {
-            const tokenOpts = { fromEnv: null, fromStdin: false };
-            for (let i = 1; i < actionArgs.length; i++) {
-              if (actionArgs[i] === "--from-env") tokenOpts.fromEnv = actionArgs[++i];
-              else if (actionArgs[i] === "--from-stdin") tokenOpts.fromStdin = true;
-            }
-            await sandboxConfig.configRotateToken(cmd, tokenOpts);
-            break;
-          }
           default:
-            console.error("  Usage: nemoclaw <name> config <get|set|rotate-token>");
-            console.error("    get           [--key dotpath] [--format json|yaml]");
-            console.error("    set           --key <dotpath> --value <value> [--restart]");
-            console.error("    rotate-token  [--from-env <VAR>] [--from-stdin]");
+            console.error("  Usage: nemoclaw <name> config get [--key dotpath] [--format json|yaml]");
             process.exit(1);
         }
         break;

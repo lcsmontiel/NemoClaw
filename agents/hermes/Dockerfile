@@ -67,46 +67,41 @@ RUN mkdir -p /sandbox/.nemoclaw/blueprints/0.1.0 \
     && cp -r /opt/nemoclaw-blueprint/* /sandbox/.nemoclaw/blueprints/0.1.0/
 
 # Generate Hermes config.yaml and .env from build args.
-# config.yaml is immutable at runtime (Landlock read-only on /sandbox/.hermes).
-# .env holds API key placeholders for OpenShell provider pipeline.
+# Config is mutable by default (600 sandbox:sandbox). Immutability is opt-in
+# via `shields up`. .env holds API key placeholders for OpenShell provider pipeline.
 # SECURITY: Uses a separate script file instead of inline code to avoid
 # code injection via build-arg interpolation (same concern as OpenClaw C-2).
 RUN node --experimental-strip-types /opt/nemoclaw-generate-config.ts
 
 # Install NemoClaw plugin into Hermes
-RUN mkdir -p /sandbox/.hermes-data/plugins/nemoclaw \
-    && cp -r /opt/nemoclaw-hermes-plugin/* /sandbox/.hermes-data/plugins/nemoclaw/
+RUN mkdir -p /sandbox/.hermes/plugins/nemoclaw \
+    && cp -r /opt/nemoclaw-hermes-plugin/* /sandbox/.hermes/plugins/nemoclaw/
 
 # Write a default SOUL.md for the sandboxed agent.
-# Hermes's ensure_hermes_home() expects SOUL.md in the home directory
-# (/sandbox/.hermes/), which is immutable. Write the content to the
-# writable data dir and symlink from the immutable dir.
-RUN printf '%s\n' \
+RUN mkdir -p /sandbox/.hermes/memories \
+    && printf '%s\n' \
     'You are a helpful AI assistant running inside an NVIDIA OpenShell sandbox.' \
     'Your inference is routed through NemoClaw. You have access to terminal,' \
     'file, and web tools. Be concise and helpful.' \
-    > /sandbox/.hermes-data/memories/SOUL.md \
-    && ln -s /sandbox/.hermes-data/memories/SOUL.md /sandbox/.hermes/SOUL.md
+    > /sandbox/.hermes/SOUL.md
 
-# Lock .hermes via DAC: chown to root so sandbox user cannot modify config.
-# Same pattern as OpenClaw — Landlock provides defense-in-depth.
+# Set mutable-default permissions (600/700 sandbox:sandbox).
+# This is what shields-down restores. Shields-up applies 444 root:root + chattr +i.
 # hadolint ignore=DL3002
 USER root
-RUN chown root:root /sandbox/.hermes \
-    && rm -rf /root/.cache/pip /sandbox/.cache \
-    && find /sandbox/.hermes -mindepth 1 -maxdepth 1 -exec chown -h root:root {} + \
-    && chmod 755 /sandbox/.hermes \
-    && chmod 444 /sandbox/.hermes/config.yaml \
-    && chmod 444 /sandbox/.hermes/.env
+RUN rm -rf /root/.cache/pip /sandbox/.cache \
+    && chown -R sandbox:sandbox /sandbox/.hermes \
+    && chmod 700 /sandbox/.hermes \
+    && chmod 600 /sandbox/.hermes/config.yaml \
+    && chmod 600 /sandbox/.hermes/.env
 
 # Pin config hash at build time for integrity verification at startup.
 RUN sha256sum /sandbox/.hermes/config.yaml /sandbox/.hermes/.env \
     > /sandbox/.hermes/.config-hash \
-    && chmod 444 /sandbox/.hermes/.config-hash \
-    && chown root:root /sandbox/.hermes/.config-hash
+    && chmod 600 /sandbox/.hermes/.config-hash \
+    && chown sandbox:sandbox /sandbox/.hermes/.config-hash
 
-# start.sh handles privilege separation: runs as root initially to perform
-# symlink validation and hardening, then drops to 'gateway' user via gosu
-# for the agent process. See the root-path branch in start.sh.
+# start.sh handles privilege separation: runs as root initially, then drops
+# to 'gateway' user via gosu for the agent process. See start.sh.
 ENTRYPOINT ["/usr/local/bin/nemoclaw-start"]
 CMD ["/bin/bash"]

@@ -77,38 +77,21 @@ INTERNAL_PORT=18642
 HERMES="$(command -v hermes)" # Resolve once, use absolute path everywhere
 
 # Hermes writes state files (PID, state.db, .channel_directory) directly into
-# HERMES_HOME. We cannot point it at the immutable /sandbox/.hermes dir.
-# Instead: verify integrity of the immutable source, then copy config to the
-# writable .hermes-data dir so Hermes can coexist with its own state files.
-HERMES_IMMUTABLE="/sandbox/.hermes"
-HERMES_WRITABLE="/sandbox/.hermes-data"
+# HERMES_HOME alongside config. Config is mutable by default (600 sandbox:sandbox).
+# Immutability is opt-in via `shields up`.
+HERMES_DIR="/sandbox/.hermes"
 
 # ── Config integrity check ──────────────────────────────────────
 verify_config_integrity() {
-  local hash_file="${HERMES_IMMUTABLE}/.config-hash"
+  local hash_file="${HERMES_DIR}/.config-hash"
   if [ ! -f "$hash_file" ]; then
     echo "[SECURITY] Config hash file missing — refusing to start without integrity verification" >&2
     return 1
   fi
-  if ! (cd "${HERMES_IMMUTABLE}" && sha256sum -c "$hash_file" --status 2>/dev/null); then
+  if ! (cd "${HERMES_DIR}" && sha256sum -c "$hash_file" --status 2>/dev/null); then
     echo "[SECURITY] Hermes config integrity check FAILED — config may have been tampered with" >&2
     return 1
   fi
-}
-
-# Copy verified immutable config into the writable HERMES_HOME so the
-# gateway process can read it alongside its own state files.
-deploy_config_to_writable() {
-  # When running as root, use gosu to write as sandbox user (owner of .hermes-data).
-  if [ "$(id -u)" -eq 0 ]; then
-    gosu sandbox cp "${HERMES_IMMUTABLE}/config.yaml" "${HERMES_WRITABLE}/config.yaml"
-    gosu sandbox cp "${HERMES_IMMUTABLE}/.env" "${HERMES_WRITABLE}/.env"
-  else
-    cp "${HERMES_IMMUTABLE}/config.yaml" "${HERMES_WRITABLE}/config.yaml"
-    cp "${HERMES_IMMUTABLE}/.env" "${HERMES_WRITABLE}/.env"
-  fi
-  chmod 600 "${HERMES_WRITABLE}/config.yaml" "${HERMES_WRITABLE}/.env" 2>/dev/null || true
-  echo "[config] Deployed verified config to ${HERMES_WRITABLE}" >&2
 }
 
 install_configure_guard() {
@@ -146,52 +129,6 @@ GUARD
       printf '\n%s\n' "$snippet" >>"$rc_file"
     fi
   done
-}
-
-validate_hermes_symlinks() {
-  local entry name target expected
-  for entry in /sandbox/.hermes/*; do
-    [ -L "$entry" ] || continue
-    name="$(basename "$entry")"
-    target="$(readlink -f "$entry" 2>/dev/null || true)"
-    expected="/sandbox/.hermes-data/$name"
-    if [ "$target" != "$expected" ]; then
-      echo "[SECURITY] Symlink $entry points to unexpected target: $target (expected $expected)" >&2
-      return 1
-    fi
-  done
-}
-
-harden_hermes_symlinks() {
-  local entry hardened failed
-  hardened=0
-  failed=0
-
-  if ! command -v chattr >/dev/null 2>&1; then
-    echo "[SECURITY] chattr not available — relying on DAC + Landlock for .hermes hardening" >&2
-    return 0
-  fi
-
-  if chattr +i /sandbox/.hermes 2>/dev/null; then
-    hardened=$((hardened + 1))
-  else
-    failed=$((failed + 1))
-  fi
-
-  for entry in /sandbox/.hermes/*; do
-    [ -L "$entry" ] || continue
-    if chattr +i "$entry" 2>/dev/null; then
-      hardened=$((hardened + 1))
-    else
-      failed=$((failed + 1))
-    fi
-  done
-
-  if [ "$failed" -gt 0 ]; then
-    echo "[SECURITY] Immutable hardening applied to $hardened path(s); $failed path(s) could not be hardened — continuing with DAC + Landlock" >&2
-  elif [ "$hardened" -gt 0 ]; then
-    echo "[SECURITY] Immutable hardening applied to /sandbox/.hermes and validated symlinks" >&2
-  fi
 }
 
 configure_messaging_channels() {
@@ -294,7 +231,7 @@ export NO_PROXY=\"$_NO_PROXY_VAL\"
 export http_proxy=\"$_PROXY_URL\"
 export https_proxy=\"$_PROXY_URL\"
 export no_proxy=\"$_NO_PROXY_VAL\"
-export HERMES_HOME=\"${HERMES_WRITABLE}\"
+export HERMES_HOME=\"${HERMES_DIR}\"
 ${_PROXY_MARKER_END}"
 
 if [ "$(id -u)" -eq 0 ]; then
@@ -334,13 +271,12 @@ echo 'Setting up NemoClaw (Hermes)...' >&2
 if [ "$(id -u)" -ne 0 ]; then
   echo "[gateway] Running as non-root (uid=$(id -u)) — privilege separation disabled" >&2
   export HOME=/sandbox
-  export HERMES_HOME="${HERMES_WRITABLE}"
+  export HERMES_HOME="${HERMES_DIR}"
 
   if ! verify_config_integrity; then
     echo "[SECURITY] Config integrity check failed — refusing to start (non-root mode)" >&2
     exit 1
   fi
-  deploy_config_to_writable
   install_configure_guard
   configure_messaging_channels
 
@@ -353,7 +289,7 @@ if [ "$(id -u)" -ne 0 ]; then
 
   # Start decode proxy and Hermes gateway
   start_decode_proxy
-  HERMES_HOME="${HERMES_WRITABLE}" \
+  HERMES_HOME="${HERMES_DIR}" \
     HTTPS_PROXY="http://127.0.0.1:${DECODE_PROXY_PORT}" \
     HTTP_PROXY="http://127.0.0.1:${DECODE_PROXY_PORT}" \
     https_proxy="http://127.0.0.1:${DECODE_PROXY_PORT}" \
@@ -372,7 +308,6 @@ fi
 # ── Root path (full privilege separation via gosu) ─────────────
 
 verify_config_integrity
-deploy_config_to_writable
 install_configure_guard
 configure_messaging_channels
 
@@ -385,16 +320,9 @@ touch /tmp/gateway.log
 chown gateway:gateway /tmp/gateway.log
 chmod 600 /tmp/gateway.log
 
-# Verify ALL symlinks in .hermes point to expected .hermes-data targets.
-validate_hermes_symlinks
-
-# Lock .hermes directory after validation.
-harden_hermes_symlinks
-
-# Start the gateway as the 'gateway' user.
 # Start decode proxy and gateway
 start_decode_proxy
-HERMES_HOME="${HERMES_WRITABLE}" \
+HERMES_HOME="${HERMES_DIR}" \
   HTTPS_PROXY="http://127.0.0.1:${DECODE_PROXY_PORT}" \
   HTTP_PROXY="http://127.0.0.1:${DECODE_PROXY_PORT}" \
   https_proxy="http://127.0.0.1:${DECODE_PROXY_PORT}" \

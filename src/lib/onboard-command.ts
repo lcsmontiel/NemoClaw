@@ -8,7 +8,6 @@ export interface OnboardCommandOptions {
   fromDockerfile: string | null;
   acceptThirdPartySoftware: boolean;
   agent: string | null;
-  dangerouslySkipPermissions: boolean;
 }
 
 export interface RunOnboardCommandDeps {
@@ -31,12 +30,11 @@ const ONBOARD_BASE_ARGS = [
   "--non-interactive",
   "--resume",
   "--recreate-sandbox",
-  "--dangerously-skip-permissions",
 ];
 
 function onboardUsageLines(noticeAcceptFlag: string): string[] {
   return [
-    `  Usage: nemoclaw onboard [--non-interactive] [--resume] [--recreate-sandbox] [--from <Dockerfile>] [--agent <name>] [--dangerously-skip-permissions] [${noticeAcceptFlag}]`,
+    `  Usage: nemoclaw onboard [--non-interactive] [--resume] [--recreate-sandbox] [--from <Dockerfile>] [--agent <name>] [${noticeAcceptFlag}]`,
     "",
   ];
 }
@@ -104,7 +102,6 @@ export function parseOnboardArgs(
     acceptThirdPartySoftware:
       parsedArgs.includes(noticeAcceptFlag) || String(deps.env[noticeAcceptEnv] || "") === "1",
     agent,
-    dangerouslySkipPermissions: parsedArgs.includes("--dangerously-skip-permissions"),
   };
 }
 
