@@ -1,8 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 //
-// ws-proxy-fix.ts — preload script to fix WebSocket connections through the
-// OpenShell L7 proxy when HTTPS_PROXY is set.
+// ws-proxy-fix.ts — preload script to fix Discord WebSocket connections
+// through the OpenShell L7 proxy when HTTPS_PROXY is set.
 //
 // Problem (NemoClaw#1570):
 //   The `ws` library (used by OpenClaw's Discord extension via @buape/carbon)
@@ -16,10 +16,11 @@
 //   loops on close code 1006.
 //
 // Fix:
-//   Patch https.request() to detect WebSocket upgrade requests (Upgrade: websocket
-//   header) and inject an agent that issues a proper CONNECT request to the proxy,
-//   then upgrades the tunnel socket to TLS. Non-WebSocket HTTPS requests pass
-//   through unchanged.
+//   Patch https.request() to detect WebSocket upgrade requests to Discord
+//   gateway hosts (gateway.discord.gg) and inject an agent that issues a proper
+//   CONNECT request to the proxy, then upgrades the tunnel socket to TLS.
+//   All other HTTPS requests — including non-Discord WebSockets — pass through
+//   completely untouched.
 //
 //   Uses only Node.js built-in modules — no external dependencies.
 //
@@ -124,16 +125,19 @@ interface ReqOpts extends https.RequestOptions {
     return agent;
   }
 
-  // ---------- Header check ------------------------------------------------
+  // ---------- Target check -------------------------------------------------
 
   /**
-   * Check whether a headers object contains `Upgrade: websocket`
-   * (case-insensitive keys and values).
+   * Return true only for WebSocket upgrade requests targeting Discord
+   * gateway hosts (gateway.discord.gg and regional variants).
    */
-  function isWsUpgrade(
+  function isDiscordWsUpgrade(
+    host: string | undefined,
     headers: http.OutgoingHttpHeaders | undefined,
   ): boolean {
-    if (!headers || typeof headers !== "object") return false;
+    if (!host || !headers || typeof headers !== "object") return false;
+    const h = host.toLowerCase();
+    if (h !== "gateway.discord.gg" && !h.endsWith(".discord.gg")) return false;
     for (const key of Object.keys(headers)) {
       if (
         key.toLowerCase() === "upgrade" &&
@@ -184,14 +188,13 @@ interface ReqOpts extends https.RequestOptions {
       cb = typeof options === "function" ? options : callback;
     }
 
-    if (isWsUpgrade(opts.headers)) {
-      // WebSocket upgrade detected — inject CONNECT tunnel agent unless the
-      // caller already provides a custom (non-default) agent.  A custom agent
-      // means the upstream (OpenClaw) has its own proxy handling; step aside.
+    const host = opts.hostname || opts.host || undefined;
+    if (isDiscordWsUpgrade(host, opts.headers)) {
+      // Discord WebSocket upgrade — inject CONNECT tunnel agent unless the
+      // caller already provides a custom (non-default) agent.
       if (!opts.agent || opts.agent === https.globalAgent) {
-        const host = opts.hostname || opts.host || "localhost";
         const port = parseInt(String(opts.port), 10) || 443;
-        opts = { ...opts, agent: createTunnelAgent(host, port) };
+        opts = { ...opts, agent: createTunnelAgent(host!, port) };
       }
       return origRequest.call(https, opts, cb);
     }
