@@ -192,12 +192,12 @@ exit 98
     if (needsDrop) {
       // WSL does not support setuid via Node's uid/gid spawn options (EACCES).
       // Copy the installer payload into the temp dir (world-readable) and use
-      // runuser to drop to nobody for the permission-sensitive assertion.
+      // su to drop to nobody for the permission-sensitive assertion.
       const localPayload = path.join(tmp, "install.sh");
       fs.copyFileSync(INSTALLER_PAYLOAD, localPayload);
       fs.chmodSync(localPayload, 0o644);
       const wrapped =
-        `runuser -u nobody -- bash -c 'source "${localPayload}" >/dev/null 2>&1; ${innerSnippet}'`;
+        `su -s /bin/bash nobody -c 'source "${localPayload}" >/dev/null 2>&1; ${innerSnippet}'`;
       result = runInstallerFunction(wrapped, fakeBin, {
         HOME: tmp,
         TARGET_PREFIX: prefix,
