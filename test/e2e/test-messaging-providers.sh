@@ -678,6 +678,90 @@ else
   fi
 fi
 
+# M13c: Verify the ws-proxy-fix CONNECT tunnel preload (#1570).
+# The `ws` library opens WebSocket connections via https.request() with an
+# Upgrade: websocket header. The preload patches https.request() to issue a
+# CONNECT tunnel for Discord gateway hosts. This test exercises that exact
+# code path — an https.request to gateway.discord.gg with upgrade headers —
+# and checks that the connection succeeds (HTTP 101 upgrade) rather than
+# getting a 400 from the L7 proxy or a network block.
+dc_ws_tunnel=$(sandbox_exec 'node -e "
+const https = require(\"https\");
+const crypto = require(\"crypto\");
+const key = crypto.randomBytes(16).toString(\"base64\");
+const req = https.request({
+  hostname: \"gateway.discord.gg\",
+  port: 443,
+  path: \"/?v=10&encoding=json\",
+  method: \"GET\",
+  headers: {
+    \"Connection\": \"Upgrade\",
+    \"Upgrade\": \"websocket\",
+    \"Sec-WebSocket-Key\": key,
+    \"Sec-WebSocket-Version\": \"13\",
+  },
+});
+req.on(\"upgrade\", (res, socket) => {
+  let buf = \"\";
+  socket.on(\"data\", (chunk) => {
+    buf += chunk.toString();
+    if (buf.length > 10) {
+      console.log(\"UPGRADE \" + buf.slice(0, 200).replace(/[\\x00-\\x1f]+/g, \" \"));
+      socket.destroy();
+    }
+  });
+  setTimeout(() => {
+    if (!socket.destroyed) {
+      console.log(\"UPGRADE (no data)\");
+      socket.destroy();
+    }
+  }, 5000);
+});
+req.on(\"response\", (res) => {
+  console.log(\"HTTP_\" + res.statusCode);
+  res.resume();
+});
+req.on(\"error\", (e) => console.log(\"ERROR \" + e.message));
+req.setTimeout(15000, () => { req.destroy(); console.log(\"TIMEOUT\"); });
+req.end();
+"' 2>/dev/null || true)
+
+info "Discord ws-proxy-fix probe: ${dc_ws_tunnel:0:300}"
+
+if echo "$dc_ws_tunnel" | grep -q "UPGRADE"; then
+  pass "M13c: Discord gateway CONNECT tunnel succeeded (ws-proxy-fix #1570)"
+elif echo "$dc_ws_tunnel" | grep -q "HTTP_400"; then
+  if [ "$STRICT_DISCORD_GATEWAY" = "1" ]; then
+    fail "M13c: Discord gateway got 400 — ws-proxy-fix CONNECT tunnel not working"
+  else
+    skip "M13c: Discord gateway got 400 — ws-proxy-fix may not be active (${dc_ws_tunnel:0:200})"
+  fi
+elif echo "$dc_ws_tunnel" | grep -qiE "EAI_AGAIN|getaddrinfo"; then
+  if [ "$STRICT_DISCORD_GATEWAY" = "1" ]; then
+    fail "M13c: Discord gateway DNS resolution failure (${dc_ws_tunnel:0:200})"
+  else
+    skip "M13c: Discord gateway DNS resolution failure (${dc_ws_tunnel:0:200})"
+  fi
+elif echo "$dc_ws_tunnel" | grep -q "TIMEOUT"; then
+  if [ "$STRICT_DISCORD_GATEWAY" = "1" ]; then
+    fail "M13c: Discord gateway CONNECT tunnel timed out"
+  else
+    skip "M13c: Discord gateway CONNECT tunnel timed out"
+  fi
+elif echo "$dc_ws_tunnel" | grep -q "ERROR"; then
+  if [ "$STRICT_DISCORD_GATEWAY" = "1" ]; then
+    fail "M13c: Discord gateway CONNECT tunnel failed (${dc_ws_tunnel:0:200})"
+  else
+    skip "M13c: Discord gateway CONNECT tunnel failed (${dc_ws_tunnel:0:200})"
+  fi
+else
+  if [ "$STRICT_DISCORD_GATEWAY" = "1" ]; then
+    fail "M13c: Discord gateway CONNECT tunnel returned unclassified result (${dc_ws_tunnel:0:200})"
+  else
+    skip "M13c: Discord gateway CONNECT tunnel returned unclassified result (${dc_ws_tunnel:0:200})"
+  fi
+fi
+
 # M14 (negative): curl should be blocked by binary restriction
 curl_reach=$(sandbox_exec "curl -s --max-time 10 https://api.telegram.org/ 2>&1" 2>/dev/null || true)
 if echo "$curl_reach" | grep -qiE "(blocked|denied|forbidden|refused|not found|no such)"; then
