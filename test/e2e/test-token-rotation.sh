@@ -119,11 +119,6 @@ if [ "$PREREQS_OK" != "1" ]; then
   exit 0
 fi
 
-# Determinism: `messagingTokenDefs` (src/lib/onboard.ts:3395-3416) reads ALL
-# messaging env vars. Clear ambient SLACK_* so an extra slack-bridge provider
-# doesn't break the provider-isolation checks.
-unset SLACK_BOT_TOKEN SLACK_APP_TOKEN
-
 # ── Helpers ───────────────────────────────────────────────────────
 
 cleanup() {
@@ -141,6 +136,9 @@ openshell gateway destroy -g nemoclaw 2>/dev/null || true
 
 export TELEGRAM_BOT_TOKEN="$TELEGRAM_BOT_TOKEN_A"
 export DISCORD_BOT_TOKEN="$DISCORD_BOT_TOKEN_A"
+# Determinism: clear ambient SLACK_* so onboard doesn't add an extra
+# slack-bridge provider (messagingTokenDefs at onboard.ts).
+unset SLACK_BOT_TOKEN SLACK_APP_TOKEN
 export NEMOCLAW_SANDBOX_NAME="$SANDBOX_NAME"
 export NEMOCLAW_POLICY_TIER="open"
 export NEMOCLAW_RECREATE_SANDBOX=1
@@ -257,6 +255,9 @@ process.exit('DISCORD_BOT_TOKEN' in h ? 0 : 1);
 
   export TELEGRAM_BOT_TOKEN="$TELEGRAM_BOT_TOKEN_B"
   export DISCORD_BOT_TOKEN="$DISCORD_BOT_TOKEN_A"
+  # Determinism: clear ambient SLACK_* so onboard doesn't add an extra
+  # slack-bridge provider (messagingTokenDefs at onboard.ts).
+  unset SLACK_BOT_TOKEN SLACK_APP_TOKEN
   unset NEMOCLAW_RECREATE_SANDBOX
 
   ONBOARD_OUTPUT=$(nemoclaw onboard --non-interactive 2>&1)
@@ -334,6 +335,9 @@ process.exit('DISCORD_BOT_TOKEN' in h ? 0 : 1);
 
   export TELEGRAM_BOT_TOKEN="$TELEGRAM_BOT_TOKEN_B"
   export DISCORD_BOT_TOKEN="$DISCORD_BOT_TOKEN_B"
+  # Determinism: clear ambient SLACK_* so onboard doesn't add an extra
+  # slack-bridge provider (messagingTokenDefs at onboard.ts).
+  unset SLACK_BOT_TOKEN SLACK_APP_TOKEN
 
   ONBOARD_OUTPUT=$(nemoclaw onboard --non-interactive 2>&1)
   onboard_exit=$?
