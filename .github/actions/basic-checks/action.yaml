@@ -38,10 +38,6 @@ runs:
       shell: bash
       run: npm run build:cli
 
-    - name: Build blueprint TypeScript modules
-      shell: bash
-      run: npm run build:blueprint
-
     - name: Validate config schemas
       shell: bash
       run: npm run validate:configs
