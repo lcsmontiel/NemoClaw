@@ -768,9 +768,9 @@ const req = https.request({
   },
 });
 
-req.on(\"upgrade\", (_res, socket) => {
+req.on(\"upgrade\", (_res, socket, head) => {
   results.push(\"UPGRADED\");
-  let pending = Buffer.alloc(0);
+  let pending = head && head.length ? Buffer.from(head) : Buffer.alloc(0);
 
   socket.on(\"data\", (chunk) => {
     pending = Buffer.concat([pending, chunk]);

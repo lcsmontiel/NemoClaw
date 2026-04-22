@@ -114,7 +114,10 @@ interface ReqOpts extends https.RequestOptions {
         },
       );
 
-      connectReq.on("error", (err: Error) => callback(err));
+      connectReq.on("error", (err: Error) => {
+        connectReq.destroy();
+        callback(err);
+      });
       connectReq.end();
 
       // createConnection expects a synchronous return; the real socket arrives
@@ -188,7 +191,12 @@ interface ReqOpts extends https.RequestOptions {
       cb = typeof options === "function" ? options : callback;
     }
 
-    const host = opts.hostname || opts.host || undefined;
+    // opts.host may include a port (e.g. "gateway.discord.gg:443") — strip it
+    // so the CONNECT path doesn't become "host:443:443".
+    let host = opts.hostname || undefined;
+    if (!host && opts.host) {
+      host = opts.host.replace(/:\d+$/, "");
+    }
     if (isDiscordWsUpgrade(host, opts.headers)) {
       // Discord WebSocket upgrade — inject CONNECT tunnel agent unless the
       // caller already provides a custom (non-default) agent.
