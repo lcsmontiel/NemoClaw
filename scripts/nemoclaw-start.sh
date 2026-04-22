@@ -505,9 +505,11 @@ apply_slack_token_override() {
   [ -n "${SLACK_BOT_TOKEN:-}" ] || return 0
 
   # SECURITY: Only root can write to /sandbox/.openclaw (root:root 444).
+  # Non-root with SLACK_BOT_TOKEN set means the placeholder can never be resolved —
+  # Bolt will crash with invalid_auth. Fail fast rather than silently skip.
   if [ "$(id -u)" -ne 0 ]; then
-    printf '[SECURITY] Slack token override ignored — requires root (non-root mode cannot write to config)\n' >&2
-    return 0
+    printf '[SECURITY] Slack Socket Mode requires a root container — SLACK_BOT_TOKEN is set but token placeholder resolution needs root. Run the container as root or remove SLACK_BOT_TOKEN.\n' >&2
+    return 1
   fi
 
   local config_file="/sandbox/.openclaw/openclaw.json"
@@ -545,26 +547,33 @@ apply_slack_token_override() {
   SLACK_BOT_TOKEN="$SLACK_BOT_TOKEN" \
     SLACK_APP_TOKEN="${SLACK_APP_TOKEN:-}" \
     python3 - "$config_file" <<'PYSLACK'
-import json, os, sys
+import json, os, re, sys
 
 config_file = sys.argv[1]
 bot_token = os.environ["SLACK_BOT_TOKEN"]
 app_token = os.environ.get("SLACK_APP_TOKEN", "")
-placeholder_prefix = "openshell:resolve:env:"
+# json.dumps produces a quoted string; strip the outer quotes to get a
+# JSON-safe value that can be spliced directly into the existing string literal.
+bot_token_json = json.dumps(bot_token)[1:-1]
+app_token_json = json.dumps(app_token)[1:-1]
 
 with open(config_file) as f:
-    cfg = json.load(f)
+    content = f.read()
 
-slack = cfg.get("channels", {}).get("slack", {})
-default_acct = slack.get("accounts", {}).get("default", {})
-
-if default_acct.get("botToken", "").startswith(placeholder_prefix):
-    default_acct["botToken"] = bot_token
-if app_token and default_acct.get("appToken", "").startswith(placeholder_prefix):
-    default_acct["appToken"] = app_token
+content = re.sub(
+    r'("botToken"\s*:\s*")openshell:resolve:env:SLACK_BOT_TOKEN(")',
+    lambda m: m.group(1) + bot_token_json + m.group(2),
+    content,
+)
+if app_token:
+    content = re.sub(
+        r'("appToken"\s*:\s*")openshell:resolve:env:SLACK_APP_TOKEN(")',
+        lambda m: m.group(1) + app_token_json + m.group(2),
+        content,
+    )
 
 with open(config_file, "w") as f:
-    json.dump(cfg, f, indent=2)
+    f.write(content)
 PYSLACK
 
   (cd /sandbox/.openclaw && sha256sum openclaw.json >"$hash_file")
@@ -1047,13 +1056,6 @@ if [ "$(id -u)" -ne 0 ]; then
   apply_model_override
   apply_cors_override
   apply_slack_token_override
-  # SECURITY: apply_slack_token_override is a no-op when non-root.
-  # If SLACK_BOT_TOKEN is still set here the placeholder was never resolved —
-  # Bolt will crash with invalid_auth at startup. Fail fast with a clear message.
-  if [ -n "${SLACK_BOT_TOKEN:-}" ]; then
-    printf '[SECURITY] Slack Socket Mode requires a root container — SLACK_BOT_TOKEN is set but token placeholder resolution needs root. Run the container as root or remove SLACK_BOT_TOKEN.\n' >&2
-    exit 1
-  fi
   export_gateway_token
   install_configure_guard
   configure_messaging_channels
