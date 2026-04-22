@@ -191,7 +191,7 @@ section "Phase 3: shields up"
 SHIELDS_UP_OUTPUT=$(nemoclaw "${SANDBOX_NAME}" shields up 2>&1)
 echo "$SHIELDS_UP_OUTPUT"
 
-if echo "$SHIELDS_UP_OUTPUT" | grep -q "Shields UP"; then
+if echo "$SHIELDS_UP_OUTPUT" | grep -q "Lockdown active"; then
   pass "shields up succeeded"
 else
   fail "shields up did not report success: ${SHIELDS_UP_OUTPUT}"
@@ -285,7 +285,7 @@ SHIELDS_DOWN_OUTPUT=$(nemoclaw "${SANDBOX_NAME}" shields down \
   --timeout 5m --reason "E2E shields lifecycle test" 2>&1)
 echo "$SHIELDS_DOWN_OUTPUT"
 
-if echo "$SHIELDS_DOWN_OUTPUT" | grep -q "Shields DOWN"; then
+if echo "$SHIELDS_DOWN_OUTPUT" | grep -q "Config unlocked"; then
   pass "shields down succeeded"
 else
   fail "shields down did not report success: ${SHIELDS_DOWN_OUTPUT}"
@@ -454,7 +454,7 @@ section "Phase 10: Double shields-up rejected"
 nemoclaw "${SANDBOX_NAME}" shields up 2>&1
 DOUBLE_UP=$(nemoclaw "${SANDBOX_NAME}" shields up 2>&1 || true)
 
-if echo "$DOUBLE_UP" | grep -q "already UP"; then
+if echo "$DOUBLE_UP" | grep -q "already active"; then
   pass "Double shields-up rejected"
 else
   fail "Double shields-up should be rejected: ${DOUBLE_UP}"
@@ -470,7 +470,7 @@ section "Phase 11: Double shields-down rejected"
 
 DOUBLE_DOWN=$(nemoclaw "${SANDBOX_NAME}" shields down --timeout 5m --reason "Should fail" 2>&1 || true)
 
-if echo "$DOUBLE_DOWN" | grep -q "already DOWN"; then
+if echo "$DOUBLE_DOWN" | grep -q "already unlocked"; then
   pass "Double shields-down rejected"
 else
   fail "Double shields-down should be rejected: ${DOUBLE_DOWN}"

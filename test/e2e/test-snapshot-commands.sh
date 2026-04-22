@@ -104,7 +104,7 @@ info "Phase 3: Creating snapshot..."
 SNAPSHOT_OUTPUT=$(nemoclaw "${SANDBOX_NAME}" snapshot create 2>&1)
 echo "$SNAPSHOT_OUTPUT"
 
-if echo "$SNAPSHOT_OUTPUT" | grep -q "Snapshot created"; then
+if echo "$SNAPSHOT_OUTPUT" | grep -q "Snapshot.*created"; then
   pass "snapshot create succeeded"
 else
   fail "snapshot create did not report success: ${SNAPSHOT_OUTPUT}"
