@@ -246,13 +246,10 @@ function runRemoteTest(scriptPath) {
   ].join(" && ");
 
   // Stream test output to CI log AND capture it for assertions.
-  // 30 min cap: most suites (credential-sanitization, telegram-injection,
-  // messaging-providers) reuse the e2e-test sandbox created by beforeAll
-  // and finish well under 15 min. Suites that do their own `nemoclaw
-  // onboard` inside the test (ollama, future provider-specific suites)
-  // need the full ~14 min for a cold-CPU-Brev 729 MiB sandbox image
-  // build + upload plus ancillary setup.
-  sshEnv(cmd, { timeout: 1_800_000, stream: true });
+  // 15 min cap: all suites now reuse the e2e-test sandbox created in
+  // beforeAll (including ollama, whose provider-specific host prep
+  // and onboard happen in beforeAll).
+  sshEnv(cmd, { timeout: 900_000, stream: true });
   // Retrieve the captured output for assertion checking
   return ssh("cat /tmp/test-output.log", { timeout: 30_000 });
 }
@@ -465,6 +462,31 @@ function bootstrapLaunchable(elapsed) {
 }
 
 /**
+ * Install Ollama on the Brev host and pre-pull the small model so the
+ * subsequent `nemoclaw onboard --provider=ollama` can wire up the
+ * auth-proxy chain against a running Ollama binary. Idempotent.
+ */
+function installOllamaAndPullModel(elapsed) {
+  console.log(`[${elapsed()}] Installing Ollama on host and pre-pulling qwen2.5:0.5b...`);
+  ssh(
+    [
+      `set -e`,
+      `if ! command -v ollama >/dev/null 2>&1; then`,
+      `  curl -fsSL https://ollama.com/install.sh | sh >/tmp/ollama-install.log 2>&1`,
+      `fi`,
+      // Wait up to 30s for the systemd service to accept connections.
+      `for i in $(seq 1 30); do`,
+      `  curl -sf --max-time 2 http://127.0.0.1:11434/api/tags >/dev/null 2>&1 && break`,
+      `  sleep 1`,
+      `done`,
+      `ollama pull qwen2.5:0.5b 2>&1 | tail -3`,
+    ].join("\n"),
+    { timeout: 600_000, stream: true },
+  );
+  console.log(`[${elapsed()}] Ollama ready on host`);
+}
+
+/**
  * Launch nemoclaw onboard in background and poll until the sandbox is Ready.
  *
  * The `nemoclaw onboard` process hangs after sandbox creation because
@@ -480,6 +502,14 @@ function pollForSandboxReady(elapsed) {
   // the background process.
   console.log(`[${elapsed()}] Starting nemoclaw onboard in background...`);
   ssh(`sudo chmod 666 /var/run/docker.sock 2>/dev/null || true`, { timeout: 10_000 });
+  // Provider-specific onboard env. ollama bakes its provider into the
+  // sandbox image at build time (see src/lib/onboard.ts Dockerfile ARG
+  // substitution), so the env has to be set for this onboard call —
+  // switching providers later would require a second ~15 min rebuild.
+  const onboardEnvPrefix =
+    TEST_SUITE === "ollama"
+      ? `NEMOCLAW_PROVIDER=ollama NEMOCLAW_MODEL=qwen2.5:0.5b NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1 NEMOCLAW_NON_INTERACTIVE=1 `
+      : "";
   // Launch onboard in background. The SSH command may exit with code 255
   // (SSH error) because background processes keep file descriptors open.
   // That's fine — we just need the process to start; we'll poll for
@@ -489,7 +519,7 @@ function pollForSandboxReady(elapsed) {
       [
         `source ~/.nvm/nvm.sh 2>/dev/null || true`,
         `cd ${remoteDir}`,
-        `nohup nemoclaw onboard --non-interactive </dev/null >/tmp/nemoclaw-onboard.log 2>&1 & disown`,
+        `nohup ${onboardEnvPrefix}nemoclaw onboard --non-interactive --yes-i-accept-third-party-software </dev/null >/tmp/nemoclaw-onboard.log 2>&1 & disown`,
         `sleep 2`,
         `echo "onboard launched"`,
       ].join(" && "),
@@ -673,19 +703,24 @@ describe.runIf(hasRequiredVars && hasAuthenticatedBrev)("Brev E2E", () => {
       const result = bootstrapLaunchable(elapsed);
       remoteDir = result.remoteDir;
 
-      // The ollama suite creates its own sandbox (e2e-ollama-brev) with
-      // NEMOCLAW_PROVIDER=ollama — the default e2e-test onboard here would
-      // trigger a full 729 MiB sandbox image build + upload (~15 min) that
-      // the ollama script then throws away. Skip to save ~15 min per run.
-      if (result.needsOnboard && TEST_SUITE !== "ollama") {
+      // ollama provider is baked into the sandbox image at build time.
+      // Install Ollama and pre-pull the model on the host BEFORE onboard
+      // so the single image build wires up the auth-proxy → host Ollama
+      // chain correctly. Onboard-inside-runRemoteTest was hitting the
+      // 30 min ssh timeout due to a second rebuild — running it here
+      // uses the 20 min maxOnboardWaitMs window with no timeout pressure.
+      if (result.needsOnboard && TEST_SUITE === "ollama") {
+        installOllamaAndPullModel(elapsed);
+      }
+
+      if (result.needsOnboard) {
         pollForSandboxReady(elapsed);
         writeManualRegistry(elapsed);
       }
     }
 
     // Verify sandbox registry (only when beforeAll created a sandbox).
-    // ollama suite owns its own sandbox, so registry won't have e2e-test.
-    if (TEST_SUITE !== "full" && TEST_SUITE !== "ollama") {
+    if (TEST_SUITE !== "full") {
       console.log(`[${elapsed()}] Verifying sandbox registry...`);
       const registry = JSON.parse(ssh(`cat ~/.nemoclaw/sandboxes.json`, { timeout: 10_000 }));
       expect(registry.defaultSandbox).toBe("e2e-test");
@@ -789,6 +824,6 @@ describe.runIf(hasRequiredVars && hasAuthenticatedBrev)("Brev E2E", () => {
       expect(output).toContain("PASS");
       expect(output).not.toMatch(/FAIL:/);
     },
-    1_500_000, // 25 min — ollama install + model pull + onboard + CPU inference
+    600_000, // 10 min — reachability probes + one CPU inference (~90s)
   );
 });
