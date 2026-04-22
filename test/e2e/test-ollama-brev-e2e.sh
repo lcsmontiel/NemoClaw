@@ -109,18 +109,18 @@ else
   fail "#1924 reachability — container could not reach host.openshell.internal:${OLLAMA_CONTAINER_PORT}"
 fi
 
-# Sandbox-level probe through OpenShell-managed networking. `openshell sandbox
-# exec` has been observed to hang well past the inner curl --max-time, so cap
-# the whole thing at 20s. If it times out (exit 124), skip rather than fail:
-# that's an openshell exec bug, not a #1924 networking regression, and the
-# docker host-gateway probe above already verifies the same auth-proxy path.
+# Sandbox-level probe through OpenShell-managed networking. This exercises the
+# kubectl-exec path (distinct from the docker host-gateway probe above) that
+# nightly-e2e jobs also use for readiness probes. Cap at 20s: if the exec
+# wrapper hangs, that's a real regression (possibly same family as the
+# nightly kubectl-exec-127 cascade) and must not be silently skipped.
 sandbox_probe_exit=0
 timeout 20 openshell sandbox exec --name "$SANDBOX_NAME" -- \
   curl -sf --max-time 5 "http://host.openshell.internal:${OLLAMA_CONTAINER_PORT}/api/tags" >/dev/null 2>&1 || sandbox_probe_exit=$?
 if [[ $sandbox_probe_exit -eq 0 ]]; then
   pass "Sandbox reached auth proxy via host.openshell.internal"
 elif [[ $sandbox_probe_exit -eq 124 ]]; then
-  skip "Sandbox probe hung in 'openshell sandbox exec' — orthogonal to #1924 (docker probe above covers the path)"
+  fail "openshell sandbox exec hung for >20s — investigate (may match nightly kubectl-exec-127 cascade)"
 else
   fail "Sandbox could not reach auth proxy (exit $sandbox_probe_exit)"
 fi
