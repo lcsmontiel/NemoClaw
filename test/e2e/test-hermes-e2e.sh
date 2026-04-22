@@ -379,13 +379,13 @@ data_dir_check=$($TIMEOUT_CMD ssh -F "$ssh_config" \
   -o ConnectTimeout=10 \
   -o LogLevel=ERROR \
   "openshell-${SANDBOX_NAME}" \
-  "test -d /sandbox/.hermes-data && echo EXISTS || echo MISSING" \
+  "test -d /sandbox/.hermes && echo EXISTS || echo MISSING" \
   2>&1) || true
 
 if echo "$data_dir_check" | grep -q "EXISTS"; then
-  pass "Hermes writable data directory exists at /sandbox/.hermes-data"
+  pass "Hermes config/state directory exists at /sandbox/.hermes"
 else
-  fail "Hermes writable data directory not found at /sandbox/.hermes-data"
+  fail "Hermes config/state directory not found at /sandbox/.hermes"
 fi
 
 rm -f "$ssh_config"

@@ -478,11 +478,13 @@ This is expected.
 The sandbox's OpenClaw configuration (`/sandbox/.openclaw/openclaw.json`) is baked into the container image at build time.
 NemoClaw's sandbox entrypoint installs a guard that intercepts `openclaw config set` and `openclaw config unset` and prints an actionable error, because changes made inside the running sandbox do not persist across rebuilds.
 
-Rebuild the sandbox from the host to change its OpenClaw configuration:
+To change your configuration, exit the sandbox and rerun onboarding:
 
 ```console
-$ nemoclaw <sandbox> rebuild
+$ nemoclaw onboard --resume
 ```
+
+This rebuilds the sandbox with your updated settings.
 
 ### `openclaw doctor --fix` cannot repair Discord channel config inside the sandbox
 

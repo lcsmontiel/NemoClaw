@@ -31,11 +31,7 @@ import { resolveOpenshell } from "./resolve-openshell.js";
 import { captureOpenshellCommand } from "./openshell.js";
 import { sanitizeConfigFile, isSensitiveFile } from "./credential-filter.js";
 
-const REBUILD_BACKUPS_DIR = path.join(
-  process.env.HOME || "/tmp",
-  ".nemoclaw",
-  "rebuild-backups",
-);
+const REBUILD_BACKUPS_DIR = path.join(process.env.HOME || "/tmp", ".nemoclaw", "rebuild-backups");
 
 const MANIFEST_VERSION = 1;
 
@@ -51,6 +47,8 @@ export interface RebuildManifest {
   stateDirs: string[];
   /** Single config/state directory */
   dir: string;
+  /** @deprecated Old field name for `dir` — retained for backward compat with pre-consolidation backups. */
+  writableDir?: string;
   backupPath: string;
   blueprintDigest: string | null;
   policyPresets?: string[];
@@ -131,10 +129,7 @@ function isWithinRoot(candidatePath: string, rootPath: string): boolean {
  * List tar entries and validate every path is within targetDir.
  * Rejects absolute paths, path traversal (..), and null bytes.
  */
-export function validateTarEntries(
-  tarBuffer: Buffer,
-  targetDir: string,
-): TarValidationResult {
+export function validateTarEntries(tarBuffer: Buffer, targetDir: string): TarValidationResult {
   const result = spawnSync("tar", ["-tf", "-"], {
     input: tarBuffer,
     encoding: "utf-8",
@@ -146,7 +141,9 @@ export function validateTarEntries(
     return {
       safe: false,
       entries: [],
-      violations: [`tar listing failed (exit ${result.status}): ${(result.stderr || "").substring(0, 200)}`],
+      violations: [
+        `tar listing failed (exit ${result.status}): ${(result.stderr || "").substring(0, 200)}`,
+      ],
     };
   }
 
@@ -196,7 +193,9 @@ function auditExtractedSymlinks(dirPath: string, rootPath: string): string[] {
           const linkTarget = readlinkSync(fullPath);
           const resolvedTarget = path.resolve(path.dirname(fullPath), linkTarget);
           if (!isWithinRoot(resolvedTarget, rootPath)) {
-            violations.push(`symlink escape: ${fullPath} -> ${linkTarget} (resolves to ${resolvedTarget})`);
+            violations.push(
+              `symlink escape: ${fullPath} -> ${linkTarget} (resolves to ${resolvedTarget})`,
+            );
           }
         } else if (stat.isDirectory()) {
           walk(fullPath);
@@ -229,7 +228,10 @@ export function rejectHardLinks(tarBuffer: Buffer): string[] {
   }
 
   const violations: string[] = [];
-  const lines = (result.stdout || "").trim().split("\n").filter((l) => l.length > 0);
+  const lines = (result.stdout || "")
+    .trim()
+    .split("\n")
+    .filter((l) => l.length > 0);
 
   for (const line of lines) {
     // Both GNU tar and bsdtar prefix hard-link entries with 'h' in verbose mode
@@ -246,10 +248,7 @@ export function rejectHardLinks(tarBuffer: Buffer): string[] {
  * SECURITY: Validate tar contents, extract with safety flags, then
  * audit for symlink escapes. Nukes the extraction on any violation.
  */
-export function safeTarExtract(
-  tarBuffer: Buffer,
-  targetDir: string,
-): SafeExtractResult {
+export function safeTarExtract(tarBuffer: Buffer, targetDir: string): SafeExtractResult {
   // Phase 1a: Validate entry paths before extraction
   const validation = validateTarEntries(tarBuffer, targetDir);
   if (!validation.safe) {
@@ -269,11 +268,11 @@ export function safeTarExtract(
   }
 
   // Phase 2: Extract with --no-same-owner to prevent ownership manipulation
-  const extractResult = spawnSync(
-    "tar",
-    ["-xf", "-", "--no-same-owner", "-C", targetDir],
-    { input: tarBuffer, stdio: ["pipe", "pipe", "pipe"], timeout: 60000 },
-  );
+  const extractResult = spawnSync("tar", ["-xf", "-", "--no-same-owner", "-C", targetDir], {
+    input: tarBuffer,
+    stdio: ["pipe", "pipe", "pipe"],
+    timeout: 60000,
+  });
 
   if (extractResult.status !== 0) {
     return {
@@ -308,11 +307,9 @@ function getSshConfig(sandboxName: string): string | null {
   const openshellBinary = resolveOpenshell();
   if (!openshellBinary) return null;
 
-  const result = captureOpenshellCommand(
-    openshellBinary,
-    ["sandbox", "ssh-config", sandboxName],
-    { ignoreError: true },
-  );
+  const result = captureOpenshellCommand(openshellBinary, ["sandbox", "ssh-config", sandboxName], {
+    ignoreError: true,
+  });
   if (result.status !== 0) return null;
   return result.output;
 }
@@ -325,11 +322,16 @@ function writeTempSshConfig(sshConfig: string): string {
 
 function sshArgs(configFile: string, sandboxName: string): string[] {
   return [
-    "-F", configFile,
-    "-o", "StrictHostKeyChecking=no",
-    "-o", "UserKnownHostsFile=/dev/null",
-    "-o", "ConnectTimeout=10",
-    "-o", "LogLevel=ERROR",
+    "-F",
+    configFile,
+    "-o",
+    "StrictHostKeyChecking=no",
+    "-o",
+    "UserKnownHostsFile=/dev/null",
+    "-o",
+    "ConnectTimeout=10",
+    "-o",
+    "LogLevel=ERROR",
     `openshell-${sandboxName}`,
   ];
 }
@@ -362,7 +364,11 @@ function sanitizeBackupDirectory(dirPath: string): void {
         walk(fullPath);
       } else if (entry.isFile()) {
         if (isSensitiveFile(entry.name)) {
-          try { require("node:fs").unlinkSync(fullPath); } catch { /* best effort */ }
+          try {
+            require("node:fs").unlinkSync(fullPath);
+          } catch {
+            /* best effort */
+          }
         } else if (entry.name.endsWith(".json")) {
           sanitizeConfigFile(fullPath);
         } else if (entry.name === ".env" || entry.name.endsWith(".env")) {
@@ -382,7 +388,9 @@ function sanitizeBackupDirectory(dirPath: string): void {
               .join("\n");
             writeFileSync(fullPath, filtered);
             chmodSync(fullPath, 0o600);
-          } catch { /* best effort */ }
+          } catch {
+            /* best effort */
+          }
         }
       }
     }
@@ -424,10 +432,7 @@ export function validateSnapshotName(name: string): string | null {
  * Back up all state directories from a running sandbox.
  * Uses the agent manifest to determine which directories contain state.
  */
-export function backupSandboxState(
-  sandboxName: string,
-  options: BackupOptions = {},
-): BackupResult {
+export function backupSandboxState(sandboxName: string, options: BackupOptions = {}): BackupResult {
   const sb = registry.getSandbox(sandboxName);
   const agentName = sb?.agent || "openclaw";
   const agent = loadAgent(agentName);
@@ -470,9 +475,7 @@ export function backupSandboxState(
   // Capture applied policy presets from the registry so they can be
   // re-applied after rebuild. Presets live in the gateway policy engine,
   // not on the sandbox filesystem, so they are lost on destroy/recreate.
-  const policyPresets: string[] = sb?.policies && sb.policies.length > 0
-    ? [...sb.policies]
-    : [];
+  const policyPresets: string[] = sb?.policies && sb.policies.length > 0 ? [...sb.policies] : [];
   _log(`policyPresets from registry: [${policyPresets.join(",")}]`);
 
   const manifest: RebuildManifest = {
@@ -512,24 +515,28 @@ export function backupSandboxState(
   try {
     // Build tar command that only includes existing directories
     // First, check which state dirs actually exist in the sandbox
-    const existCheckCmd = stateDirs
-      .map((d) => `[ -d "${dir}/${d}" ] && echo "${d}"`)
-      .join("; ");
+    const existCheckCmd = stateDirs.map((d) => `[ -d "${dir}/${d}" ] && echo "${d}"`).join("; ");
     _log(`Checking existing dirs via SSH: ${existCheckCmd.substring(0, 100)}...`);
-    const existResult = spawnSync(
-      "ssh",
-      [...sshArgs(configFile, sandboxName), existCheckCmd],
-      { encoding: "utf-8", stdio: ["ignore", "pipe", "pipe"], timeout: 30000 },
+    const existResult = spawnSync("ssh", [...sshArgs(configFile, sandboxName), existCheckCmd], {
+      encoding: "utf-8",
+      stdio: ["ignore", "pipe", "pipe"],
+      timeout: 30000,
+    });
+    _log(
+      `Dir check: exit=${existResult.status}, stdout=${(existResult.stdout || "").trim().substring(0, 200)}, stderr=${(existResult.stderr || "").trim().substring(0, 200)}`,
     );
-    _log(`Dir check: exit=${existResult.status}, stdout=${(existResult.stdout || "").trim().substring(0, 200)}, stderr=${(existResult.stderr || "").trim().substring(0, 200)}`);
     const existingDirs = (existResult.stdout || "")
       .trim()
       .split("\n")
       .filter((d) => d.length > 0);
-    _log(`Existing dirs in sandbox: [${existingDirs.join(",")}] (${existingDirs.length}/${stateDirs.length})`);
+    _log(
+      `Existing dirs in sandbox: [${existingDirs.join(",")}] (${existingDirs.length}/${stateDirs.length})`,
+    );
 
     if (existResult.status !== 0) {
-      _log(`FAILED: SSH dir check exited ${existResult.status} — cannot determine which dirs exist`);
+      _log(
+        `FAILED: SSH dir check exited ${existResult.status} — cannot determine which dirs exist`,
+      );
       return { success: false, manifest, backedUpDirs, failedDirs: [...stateDirs] };
     }
 
@@ -542,12 +549,14 @@ export function backupSandboxState(
     // Download via SSH+tar
     const tarCmd = `tar -cf - -C ${dir} ${existingDirs.join(" ")}`;
     _log(`Downloading via SSH+tar: ${tarCmd}`);
-    const result = spawnSync(
-      "ssh",
-      [...sshArgs(configFile, sandboxName), tarCmd],
-      { stdio: ["ignore", "pipe", "pipe"], timeout: 120000, maxBuffer: 256 * 1024 * 1024 },
+    const result = spawnSync("ssh", [...sshArgs(configFile, sandboxName), tarCmd], {
+      stdio: ["ignore", "pipe", "pipe"],
+      timeout: 120000,
+      maxBuffer: 256 * 1024 * 1024,
+    });
+    _log(
+      `SSH+tar download: exit=${result.status}, stdout=${result.stdout ? result.stdout.length + " bytes" : "null"}, stderr=${(result.stderr?.toString() || "").substring(0, 200)}`,
     );
-    _log(`SSH+tar download: exit=${result.status}, stdout=${result.stdout ? result.stdout.length + " bytes" : "null"}, stderr=${(result.stderr?.toString() || "").substring(0, 200)}`);
 
     if (result.status === 0 && result.stdout && result.stdout.length > 0) {
       // SECURITY: Validate tar entries, extract safely, audit symlinks
@@ -562,7 +571,11 @@ export function backupSandboxState(
       failedDirs.push(...existingDirs);
     }
   } finally {
-    try { require("node:fs").unlinkSync(configFile); } catch { /* ignore */ }
+    try {
+      require("node:fs").unlinkSync(configFile);
+    } catch {
+      /* ignore */
+    }
   }
 
   // SECURITY: Strip credentials from the local backup
@@ -584,10 +597,7 @@ export function backupSandboxState(
 /**
  * Restore state directories into a sandbox from a prior backup.
  */
-export function restoreSandboxState(
-  sandboxName: string,
-  backupPath: string,
-): RestoreResult {
+export function restoreSandboxState(sandboxName: string, backupPath: string): RestoreResult {
   _log(`restoreSandboxState: sandbox=${sandboxName}, backupPath=${backupPath}`);
   const manifest = readManifest(backupPath);
   if (!manifest) {
@@ -595,15 +605,19 @@ export function restoreSandboxState(
     return { success: false, restoredDirs: [], failedDirs: ["manifest"] };
   }
 
-  const dir = manifest.dir;
+  const dir = manifest.dir || manifest.writableDir;
+  if (!dir) {
+    _log("FAILED: manifest has no dir or writableDir");
+    return { success: false, restoredDirs: [], failedDirs: ["manifest"] };
+  }
   const restoredDirs: string[] = [];
   const failedDirs: string[] = [];
 
   // Find which backed-up directories actually exist locally
-  const localDirs = manifest.stateDirs.filter((d) =>
-    existsSync(path.join(backupPath, d)),
+  const localDirs = manifest.stateDirs.filter((d) => existsSync(path.join(backupPath, d)));
+  _log(
+    `Local backup dirs: [${localDirs.join(",")}] (${localDirs.length}/${manifest.stateDirs.length})`,
   );
-  _log(`Local backup dirs: [${localDirs.join(",")}] (${localDirs.length}/${manifest.stateDirs.length})`);
 
   if (localDirs.length === 0) {
     _log("No dirs to restore");
@@ -620,11 +634,11 @@ export function restoreSandboxState(
   const configFile = writeTempSshConfig(sshConfig);
   try {
     // Upload via tar pipe
-    const tarResult = spawnSync(
-      "tar",
-      ["-cf", "-", "-C", backupPath, ...localDirs],
-      { stdio: ["ignore", "pipe", "pipe"], timeout: 60000, maxBuffer: 256 * 1024 * 1024 },
-    );
+    const tarResult = spawnSync("tar", ["-cf", "-", "-C", backupPath, ...localDirs], {
+      stdio: ["ignore", "pipe", "pipe"],
+      timeout: 60000,
+      maxBuffer: 256 * 1024 * 1024,
+    });
 
     if (tarResult.status !== 0 || !tarResult.stdout) {
       return { success: false, restoredDirs, failedDirs: [...localDirs] };
@@ -632,25 +646,24 @@ export function restoreSandboxState(
 
     // Remove existing state dirs before extracting so stale files from
     // later snapshots don't persist after restoring an earlier one.
-    const rmCmd = localDirs
-      .map((d) => `rm -rf "${dir}/${d}"`)
-      .join(" && ");
+    const rmCmd = localDirs.map((d) => `rm -rf "${dir}/${d}"`).join(" && ");
     _log(`Cleaning target dirs before restore: ${rmCmd}`);
-    const rmResult = spawnSync(
-      "ssh",
-      [...sshArgs(configFile, sandboxName), rmCmd],
-      { stdio: ["ignore", "pipe", "pipe"], timeout: 30000 },
-    );
+    const rmResult = spawnSync("ssh", [...sshArgs(configFile, sandboxName), rmCmd], {
+      stdio: ["ignore", "pipe", "pipe"],
+      timeout: 30000,
+    });
     if (rmResult.status !== 0) {
-      _log(`WARNING: pre-restore cleanup failed (exit ${rmResult.status}): ${(rmResult.stderr?.toString() || "").substring(0, 200)}`);
+      _log(
+        `WARNING: pre-restore cleanup failed (exit ${rmResult.status}): ${(rmResult.stderr?.toString() || "").substring(0, 200)}`,
+      );
     }
 
     const extractCmd = `tar -xf - -C ${dir}`;
-    const sshResult = spawnSync(
-      "ssh",
-      [...sshArgs(configFile, sandboxName), extractCmd],
-      { input: tarResult.stdout, stdio: ["pipe", "pipe", "pipe"], timeout: 120000 },
-    );
+    const sshResult = spawnSync("ssh", [...sshArgs(configFile, sandboxName), extractCmd], {
+      input: tarResult.stdout,
+      stdio: ["pipe", "pipe", "pipe"],
+      timeout: 120000,
+    });
 
     if (sshResult.status === 0) {
       restoredDirs.push(...localDirs);
@@ -660,19 +673,26 @@ export function restoreSandboxState(
       const openshellBinary = resolveOpenshell();
       if (openshellBinary) {
         _log(`Fixing ownership: chown -R sandbox:sandbox ${dir}`);
-        const chownResult = spawnSync(openshellBinary, [
-          "sandbox", "exec", sandboxName, "--",
-          "chown", "-R", "sandbox:sandbox", dir,
-        ], { stdio: ["ignore", "pipe", "pipe"], timeout: 30000 });
+        const chownResult = spawnSync(
+          openshellBinary,
+          ["sandbox", "exec", sandboxName, "--", "chown", "-R", "sandbox:sandbox", dir],
+          { stdio: ["ignore", "pipe", "pipe"], timeout: 30000 },
+        );
         if (chownResult.status !== 0) {
-          _log(`WARNING: chown failed (exit ${chownResult.status}) — agent may not be able to read restored state`);
+          _log(
+            `WARNING: chown failed (exit ${chownResult.status}) — agent may not be able to read restored state`,
+          );
         }
       }
     } else {
       failedDirs.push(...localDirs);
     }
   } finally {
-    try { require("node:fs").unlinkSync(configFile); } catch { /* ignore */ }
+    try {
+      require("node:fs").unlinkSync(configFile);
+    } catch {
+      /* ignore */
+    }
   }
 
   return {
@@ -714,9 +734,7 @@ export function listBackups(sandboxName: string): SnapshotEntry[] {
   const dir = path.join(REBUILD_BACKUPS_DIR, sandboxName);
   if (!existsSync(dir)) return [];
 
-  const rawEntries = readdirSync(dir, { withFileTypes: true }).filter((e) =>
-    e.isDirectory(),
-  );
+  const rawEntries = readdirSync(dir, { withFileTypes: true }).filter((e) => e.isDirectory());
 
   const manifests: RebuildManifest[] = [];
   for (const entry of rawEntries) {
@@ -755,10 +773,7 @@ export interface SnapshotMatchResult {
  *   2. exact user-assigned name match
  *   3. exact timestamp match
  */
-export function findBackup(
-  sandboxName: string,
-  selector: string,
-): SnapshotMatchResult {
+export function findBackup(sandboxName: string, selector: string): SnapshotMatchResult {
   const backups = listBackups(sandboxName);
 
   const versionMatch = VERSION_SELECTOR_RE.exec(selector);

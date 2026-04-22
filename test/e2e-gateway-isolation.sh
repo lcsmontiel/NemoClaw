@@ -236,11 +236,11 @@ else
   fi
 fi
 
-# ── Test 13: Sandbox user cannot write to .nemoclaw parent ────────
+# ── Test 13b: Sandbox user cannot write to .nemoclaw parent ───────
 # Note: /sandbox itself is sandbox-owned (DAC allows writes). Landlock makes it
 # read-only in production — tested in checks/04-landlock-readonly.sh instead.
 
-info "13. Sandbox user cannot create files in /sandbox/.nemoclaw"
+info "13b. Sandbox user cannot create files in /sandbox/.nemoclaw"
 OUT=$(run_as_sandbox "touch /sandbox/.nemoclaw/testfile 2>&1 || echo BLOCKED")
 if echo "$OUT" | grep -q "BLOCKED\|Permission denied"; then
   pass "sandbox cannot create files in .nemoclaw parent (root-owned)"
@@ -248,9 +248,9 @@ else
   fail "sandbox CAN create files in .nemoclaw parent: $OUT"
 fi
 
-# ── Test 14: Sandbox user cannot modify blueprints ────────────────
+# ── Test 14b: Sandbox user cannot modify blueprints ──────────────
 
-info "14. Sandbox user cannot modify blueprints"
+info "14b. Sandbox user cannot modify blueprints"
 OUT=$(run_as_sandbox "touch /sandbox/.nemoclaw/blueprints/testfile 2>&1 || echo BLOCKED")
 if echo "$OUT" | grep -q "BLOCKED\|Permission denied"; then
   pass "sandbox cannot write to blueprints (root-owned)"

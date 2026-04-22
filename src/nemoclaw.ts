@@ -1136,10 +1136,7 @@ function backfillAndFindOverlaps() {
   // Non-critical path: status must remain usable even if the gateway probe or
   // registry write throws, so any failure yields an empty overlap list.
   try {
-    const {
-      backfillMessagingChannels,
-      findAllOverlaps,
-    } = require("./lib/messaging-conflict");
+    const { backfillMessagingChannels, findAllOverlaps } = require("./lib/messaging-conflict");
     backfillMessagingChannels(registry, makeConflictProbe());
     return findAllOverlaps(registry);
   } catch {
@@ -1155,7 +1152,16 @@ function readGatewayLog(sandboxName) {
   try {
     const result = spawnSync(
       getOpenshellBinary(),
-      ["sandbox", "exec", "-n", sandboxName, "--", "sh", "-c", "tail -n 10 /tmp/gateway.log 2>/dev/null"],
+      [
+        "sandbox",
+        "exec",
+        "-n",
+        sandboxName,
+        "--",
+        "sh",
+        "-c",
+        "tail -n 10 /tmp/gateway.log 2>/dev/null",
+      ],
       { encoding: "utf-8", timeout: 3000, stdio: ["ignore", "pipe", "pipe"] },
     );
     const output = (result.stdout || "").trim();
@@ -1256,8 +1262,9 @@ async function sandboxConnect(sandboxName) {
   // When the user has multiple sandboxes with different providers, the
   // cluster-wide inference.local route may still point at the *other*
   // provider. Re-set it to match this sandbox's persisted config.
+  let sb;
   try {
-    const sb = registry.getSandbox(sandboxName);
+    sb = registry.getSandbox(sandboxName);
     if (sb && sb.provider && sb.model) {
       const live = parseGatewayInference(
         captureOpenshell(["inference", "get"], { ignoreError: true }).output,
@@ -1286,7 +1293,9 @@ async function sandboxConnect(sandboxName) {
   if (rawTimeout !== undefined) {
     const parsed = parseInt(rawTimeout, 10);
     if (Number.isNaN(parsed) || parsed <= 0) {
-      console.warn(`  Warning: invalid NEMOCLAW_CONNECT_TIMEOUT="${rawTimeout}", using default 120s`);
+      console.warn(
+        `  Warning: invalid NEMOCLAW_CONNECT_TIMEOUT="${rawTimeout}", using default 120s`,
+      );
     } else {
       timeout = parsed;
     }
@@ -1356,7 +1365,9 @@ async function sandboxConnect(sandboxName) {
       console.error("");
       console.error(`  Timed out after ${timeout}s waiting for sandbox '${sandboxName}'.`);
       console.error(`  Check: openshell sandbox list`);
-      console.error(`  Override timeout: NEMOCLAW_CONNECT_TIMEOUT=300 nemoclaw ${sandboxName} connect`);
+      console.error(
+        `  Override timeout: NEMOCLAW_CONNECT_TIMEOUT=300 nemoclaw ${sandboxName} connect`,
+      );
       process.exit(1);
     }
     console.log(`\r    Status: ${"Ready".padEnd(20)} (${elapsedSec()}s elapsed)`);
@@ -1379,7 +1390,9 @@ async function sandboxConnect(sandboxName) {
     console.log(
       `  ${D}Inside the sandbox, run \`${agentCmd}\` to start chatting with the agent.${R}`,
     );
-    console.log(`  ${D}Type \`/exit\` to leave the chat, then \`exit\` to return to the host shell.${R}`);
+    console.log(
+      `  ${D}Type \`/exit\` to leave the chat, then \`exit\` to return to the host shell.${R}`,
+    );
     console.log("");
   }
   const result = spawnSync(getOpenshellBinary(), ["sandbox", "connect", sandboxName], {
@@ -1409,13 +1422,9 @@ async function sandboxStatus(sandboxName) {
       if (!inferenceHealth.probed) {
         console.log(`    Inference: ${D}not probed${R} (${inferenceHealth.detail})`);
       } else if (inferenceHealth.ok) {
-        console.log(
-          `    Inference: ${G}healthy${R} (${inferenceHealth.endpoint})`,
-        );
+        console.log(`    Inference: ${G}healthy${R} (${inferenceHealth.endpoint})`);
       } else {
-        console.log(
-          `    Inference: ${_RD}unreachable${R} (${inferenceHealth.endpoint})`,
-        );
+        console.log(`    Inference: ${_RD}unreachable${R} (${inferenceHealth.endpoint})`);
         console.log(`      ${inferenceHealth.detail}`);
       }
     }
@@ -1426,10 +1435,15 @@ async function sandboxStatus(sandboxName) {
     try {
       const opsBinStatus = resolveOpenshell();
       if (opsBinStatus) {
-        const sessionResult = getActiveSandboxSessions(sandboxName, createSessionDeps(opsBinStatus));
+        const sessionResult = getActiveSandboxSessions(
+          sandboxName,
+          createSessionDeps(opsBinStatus),
+        );
         if (sessionResult.detected) {
           const count = sessionResult.sessions.length;
-          console.log(`    Connected: ${count > 0 ? `${G}yes${R} (${count} session${count > 1 ? "s" : ""})` : "no"}`);
+          console.log(
+            `    Connected: ${count > 0 ? `${G}yes${R} (${count} session${count > 1 ? "s" : ""})` : "no"}`,
+          );
         }
       }
     } catch {
@@ -1624,7 +1638,9 @@ function sandboxLogs(sandboxName, follow) {
 async function sandboxPolicyAdd(sandboxName, args = []) {
   const dryRun = args.includes("--dry-run");
   const skipConfirm =
-    args.includes("--yes") || args.includes("--force") || process.env.NEMOCLAW_NON_INTERACTIVE === "1";
+    args.includes("--yes") ||
+    args.includes("--force") ||
+    process.env.NEMOCLAW_NON_INTERACTIVE === "1";
   const allPresets = policies.listPresets();
   const applied = policies.getAppliedPresets(sandboxName);
 
@@ -1729,9 +1745,7 @@ function sandboxChannelsList(sandboxName) {
 async function promptAndRebuild(sandboxName, actionDesc) {
   if (isNonInteractive()) {
     console.log("");
-    console.log(
-      `  Change queued. Run 'nemoclaw ${sandboxName} rebuild' to apply (${actionDesc}).`,
-    );
+    console.log(`  Change queued. Run 'nemoclaw ${sandboxName} rebuild' to apply (${actionDesc}).`);
     return;
   }
   const answer = (await askPrompt(`  Rebuild '${sandboxName}' now to apply? [Y/n]: `))
@@ -1853,9 +1867,7 @@ async function sandboxChannelsSetEnabled(sandboxName, args, disabled) {
   }
 
   if (dryRun) {
-    console.log(
-      `  --dry-run: would ${verb} channel '${normalized}' for '${sandboxName}'.`,
-    );
+    console.log(`  --dry-run: would ${verb} channel '${normalized}' for '${sandboxName}'.`);
     return;
   }
 
@@ -2033,7 +2045,9 @@ async function sandboxSkillInstall(sandboxName, args = []) {
 async function sandboxPolicyRemove(sandboxName, args = []) {
   const dryRun = args.includes("--dry-run");
   const skipConfirm =
-    args.includes("--yes") || args.includes("--force") || process.env.NEMOCLAW_NON_INTERACTIVE === "1";
+    args.includes("--yes") ||
+    args.includes("--force") ||
+    process.env.NEMOCLAW_NON_INTERACTIVE === "1";
   const allPresets = policies.listPresets();
   const applied = policies.getAppliedPresets(sandboxName);
 
@@ -2113,7 +2127,9 @@ function removeSandboxImage(sandboxName) {
   if (result.status === 0) {
     console.log(`  Removed Docker image ${sb.imageTag}`);
   } else {
-    console.warn(`  ${YW}⚠${R} Failed to remove Docker image ${sb.imageTag}; run 'nemoclaw gc' to clean up.`);
+    console.warn(
+      `  ${YW}⚠${R} Failed to remove Docker image ${sb.imageTag}; run 'nemoclaw gc' to clean up.`,
+    );
   }
 }
 
@@ -2138,8 +2154,12 @@ async function sandboxDestroy(sandboxName, args = []) {
     console.log(`  ${YW}Destroy sandbox '${sandboxName}'?${R}`);
     if (activeSessionCount > 0) {
       const plural = activeSessionCount > 1 ? "sessions" : "session";
-      console.log(`  ${YW}⚠  Active SSH ${plural} detected (${activeSessionCount} connection${activeSessionCount > 1 ? "s" : ""})${R}`);
-      console.log(`  Destroying will terminate ${activeSessionCount === 1 ? "the" : "all"} active ${plural} with a Broken pipe error.`);
+      console.log(
+        `  ${YW}⚠  Active SSH ${plural} detected (${activeSessionCount} connection${activeSessionCount > 1 ? "s" : ""})${R}`,
+      );
+      console.log(
+        `  Destroying will terminate ${activeSessionCount === 1 ? "the" : "all"} active ${plural} with a Broken pipe error.`,
+      );
     }
     console.log("  This will permanently delete the sandbox and all workspace files inside it.");
     console.log("  This cannot be undone.");
@@ -2268,8 +2288,12 @@ async function sandboxRebuild(sandboxName, args = [], opts = {}) {
   if (!skipConfirm) {
     if (rebuildActiveSessionCount > 0) {
       const plural = rebuildActiveSessionCount > 1 ? "sessions" : "session";
-      console.log(`  ${YW}⚠  Active SSH ${plural} detected (${rebuildActiveSessionCount} connection${rebuildActiveSessionCount > 1 ? "s" : ""})${R}`);
-      console.log(`  Rebuilding will terminate ${rebuildActiveSessionCount === 1 ? "the" : "all"} active ${plural} with a Broken pipe error.`);
+      console.log(
+        `  ${YW}⚠  Active SSH ${plural} detected (${rebuildActiveSessionCount} connection${rebuildActiveSessionCount > 1 ? "s" : ""})${R}`,
+      );
+      console.log(
+        `  Rebuilding will terminate ${rebuildActiveSessionCount === 1 ? "the" : "all"} active ${plural} with a Broken pipe error.`,
+      );
       console.log("");
     }
     console.log("  This will:");
@@ -2669,8 +2693,7 @@ function sandboxSnapshot(sandboxName, subArgs) {
         // Virtual snapshotVersion is only assigned by listBackups, so re-resolve
         // the just-created snapshot by its timestamp to get a valid v<N>.
         const entry =
-          sandboxState.findBackup(sandboxName, result.manifest.timestamp).match ??
-          result.manifest;
+          sandboxState.findBackup(sandboxName, result.manifest.timestamp).match ?? result.manifest;
         const v = formatSnapshotVersion(entry);
         const nameSuffix = entry.name ? ` name=${entry.name}` : "";
         console.log(
@@ -2759,10 +2782,14 @@ function sandboxSnapshot(sandboxName, subArgs) {
     default:
       console.log(`  Usage:`);
       console.log(`    nemoclaw ${sandboxName} snapshot create [--name <name>]`);
-      console.log(`                                             Create a snapshot (auto-versioned v1, v2, ...)`);
+      console.log(
+        `                                             Create a snapshot (auto-versioned v1, v2, ...)`,
+      );
       console.log(`    nemoclaw ${sandboxName} snapshot list            List available snapshots`);
       console.log(`    nemoclaw ${sandboxName} snapshot restore [selector]`);
-      console.log(`                                             Restore by version (v1), name, or timestamp.`);
+      console.log(
+        `                                             Restore by version (v1), name, or timestamp.`,
+      );
       console.log(`                                             Omit to restore the most recent.`);
       break;
   }
@@ -2826,7 +2853,13 @@ async function garbageCollectImages(args = []) {
   // 1. List all openshell/sandbox-from images on the host
   const imagesResult = spawnSync(
     "docker",
-    ["images", "--filter", "reference=openshell/sandbox-from", "--format", "{{.Repository}}:{{.Tag}}\t{{.Size}}"],
+    [
+      "images",
+      "--filter",
+      "reference=openshell/sandbox-from",
+      "--format",
+      "{{.Repository}}:{{.Tag}}\t{{.Size}}",
+    ],
     { encoding: "utf-8", stdio: ["ignore", "pipe", "pipe"] },
   );
   if (imagesResult.status !== 0) {
@@ -2897,9 +2930,7 @@ async function garbageCollectImages(args = []) {
       removed++;
     } else {
       const details = `${rmiResult.stderr || rmiResult.stdout || ""}`.trim();
-      console.error(
-        `  ${YW}⚠${R} Failed to remove ${img.tag}${details ? `: ${details}` : ""}`,
-      );
+      console.error(`  ${YW}⚠${R} Failed to remove ${img.tag}${details ? `: ${details}` : ""}`);
       failed++;
     }
   }
@@ -3175,7 +3206,9 @@ const [cmd, ...args] = process.argv.slice(2);
                 opts.reason = shieldsFlags[++i];
               } else if (shieldsFlags[i] === "--policy") {
                 if (i + 1 >= shieldsFlags.length || shieldsFlags[i + 1].startsWith("--")) {
-                  console.error("  --policy requires a value (e.g. permissive, /path/to/policy.yaml)");
+                  console.error(
+                    "  --policy requires a value (e.g. permissive, /path/to/policy.yaml)",
+                  );
                   process.exit(1);
                 }
                 opts.policy = shieldsFlags[++i];
@@ -3248,7 +3281,9 @@ const [cmd, ...args] = process.argv.slice(2);
             break;
           }
           default:
-            console.error("  Usage: nemoclaw <name> config get [--key dotpath] [--format json|yaml]");
+            console.error(
+              "  Usage: nemoclaw <name> config get [--key dotpath] [--format json|yaml]",
+            );
             process.exit(1);
         }
         break;

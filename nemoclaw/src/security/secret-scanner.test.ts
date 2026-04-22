@@ -188,14 +188,7 @@ describe("scanForSecrets", () => {
 describe("isMemoryPath", () => {
   it("matches .openclaw/memory/ paths", () => {
     expect(isMemoryPath("/sandbox/.openclaw/memory/project.md")).toBe(true);
-  });
-
-  it("matches .openclaw/memory/ paths", () => {
     expect(isMemoryPath("/sandbox/.openclaw/memory/notes.md")).toBe(true);
-  });
-
-  it("matches MEMORY.md anchored to .openclaw", () => {
-    expect(isMemoryPath("/sandbox/.openclaw/MEMORY.md")).toBe(true);
   });
 
   it("matches MEMORY.md anchored to .openclaw", () => {
