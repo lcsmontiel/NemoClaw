@@ -678,16 +678,82 @@ else
   fi
 fi
 
-# M13c: Verify the ws-proxy-fix CONNECT tunnel preload (#1570).
+# M13c: Full Discord gateway handshake via ws-proxy-fix CONNECT tunnel (#1570).
 # The `ws` library opens WebSocket connections via https.request() with an
-# Upgrade: websocket header. The preload patches https.request() to issue a
-# CONNECT tunnel for Discord gateway hosts. This test exercises that exact
-# code path — an https.request to gateway.discord.gg with upgrade headers —
-# and checks that the connection succeeds (HTTP 101 upgrade) rather than
-# getting a 400 from the L7 proxy or a network block.
+# Upgrade: websocket header.  The preload patches https.request() to issue a
+# CONNECT tunnel for Discord gateway hosts.
+#
+# This test exercises the real Discord gateway protocol end-to-end:
+#   1. https.request with Upgrade: websocket → CONNECT tunnel via proxy
+#   2. Receive Discord Hello (opcode 10) with heartbeat_interval
+#   3. Send a Heartbeat (opcode 1) back to the gateway
+#   4. Receive Heartbeat ACK (opcode 11)
+#   5. Send close frame and disconnect cleanly
+#
+# If the CONNECT tunnel is broken the connection never upgrades (400 from L7
+# proxy) and none of the protocol steps succeed.
 dc_ws_tunnel=$(sandbox_exec 'node -e "
 const https = require(\"https\");
 const crypto = require(\"crypto\");
+
+// --- Minimal WebSocket framing (no ws dependency) ---
+function unmaskFrame(buf) {
+  if (buf.length < 2) return null;
+  const fin = (buf[0] & 0x80) !== 0;
+  const opcode = buf[0] & 0x0f;
+  const masked = (buf[1] & 0x80) !== 0;
+  let payloadLen = buf[1] & 0x7f;
+  let offset = 2;
+  if (payloadLen === 126) {
+    if (buf.length < 4) return null;
+    payloadLen = buf.readUInt16BE(2);
+    offset = 4;
+  } else if (payloadLen === 127) {
+    if (buf.length < 10) return null;
+    payloadLen = Number(buf.readBigUInt64BE(2));
+    offset = 10;
+  }
+  if (masked) offset += 4;
+  if (buf.length < offset + payloadLen) return null;
+  const data = buf.slice(offset, offset + payloadLen);
+  return { fin, opcode, data, totalLen: offset + payloadLen };
+}
+
+function makeFrame(opcode, payload) {
+  const buf = Buffer.from(payload);
+  const mask = crypto.randomBytes(4);
+  const masked = Buffer.alloc(buf.length);
+  for (let i = 0; i < buf.length; i++) masked[i] = buf[i] ^ mask[i % 4];
+  let header;
+  if (buf.length < 126) {
+    header = Buffer.alloc(6);
+    header[0] = 0x80 | opcode;
+    header[1] = 0x80 | buf.length;
+    mask.copy(header, 2);
+  } else {
+    header = Buffer.alloc(8);
+    header[0] = 0x80 | opcode;
+    header[1] = 0x80 | 126;
+    header.writeUInt16BE(buf.length, 2);
+    mask.copy(header, 4);
+  }
+  return Buffer.concat([header, masked]);
+}
+
+function makeCloseFrame(code) {
+  const payload = Buffer.alloc(2);
+  payload.writeUInt16BE(code, 0);
+  return makeFrame(8, payload);
+}
+
+// --- Handshake ---
+const results = [];
+const done = () => {
+  console.log(results.join(\"\\n\"));
+  process.exit(0);
+};
+const timer = setTimeout(() => { results.push(\"TIMEOUT\"); done(); }, 20000);
+
 const key = crypto.randomBytes(16).toString(\"base64\");
 const req = https.request({
   hostname: \"gateway.discord.gg\",
@@ -701,46 +767,78 @@ const req = https.request({
     \"Sec-WebSocket-Version\": \"13\",
   },
 });
-req.on(\"upgrade\", (res, socket) => {
-  let buf = \"\";
+
+req.on(\"upgrade\", (_res, socket) => {
+  results.push(\"UPGRADED\");
+  let pending = Buffer.alloc(0);
+
   socket.on(\"data\", (chunk) => {
-    buf += chunk.toString();
-    if (buf.length > 10) {
-      console.log(\"UPGRADE \" + buf.slice(0, 200).replace(/[\\x00-\\x1f]+/g, \" \"));
-      socket.destroy();
+    pending = Buffer.concat([pending, chunk]);
+    while (true) {
+      const frame = unmaskFrame(pending);
+      if (!frame) break;
+      pending = pending.slice(frame.totalLen);
+
+      if (frame.opcode === 1) {
+        let msg;
+        try { msg = JSON.parse(frame.data.toString()); } catch { continue; }
+
+        if (msg.op === 10) {
+          const hbInterval = msg.d && msg.d.heartbeat_interval;
+          results.push(\"HELLO op=10 heartbeat_interval=\" + hbInterval);
+
+          // Send Heartbeat (opcode 1, d: null)
+          const hb = JSON.stringify({ op: 1, d: null });
+          socket.write(makeFrame(1, hb));
+          results.push(\"SENT_HEARTBEAT op=1\");
+        } else if (msg.op === 11) {
+          results.push(\"HEARTBEAT_ACK op=11\");
+          // Full round-trip complete — close cleanly
+          socket.write(makeCloseFrame(1000));
+          setTimeout(() => { socket.destroy(); clearTimeout(timer); done(); }, 500);
+        }
+      } else if (frame.opcode === 8) {
+        results.push(\"CLOSE_FRAME code=\" + (frame.data.length >= 2 ? frame.data.readUInt16BE(0) : \"none\"));
+        socket.destroy();
+        clearTimeout(timer);
+        done();
+      }
     }
   });
-  setTimeout(() => {
-    if (!socket.destroyed) {
-      console.log(\"UPGRADE (no data)\");
-      socket.destroy();
-    }
-  }, 5000);
+
+  socket.on(\"error\", (e) => { results.push(\"SOCKET_ERROR \" + e.message); });
+  socket.on(\"close\", () => { clearTimeout(timer); done(); });
 });
+
 req.on(\"response\", (res) => {
-  console.log(\"HTTP_\" + res.statusCode);
+  results.push(\"HTTP_\" + res.statusCode);
   res.resume();
+  res.on(\"end\", () => { clearTimeout(timer); done(); });
 });
-req.on(\"error\", (e) => console.log(\"ERROR \" + e.message));
-req.setTimeout(15000, () => { req.destroy(); console.log(\"TIMEOUT\"); });
+req.on(\"error\", (e) => {
+  results.push(\"ERROR \" + e.message);
+  clearTimeout(timer);
+  done();
+});
 req.end();
 "' 2>/dev/null || true)
 
-info "Discord ws-proxy-fix probe: ${dc_ws_tunnel:0:300}"
+info "Discord ws-proxy-fix probe: ${dc_ws_tunnel:0:500}"
 
-if echo "$dc_ws_tunnel" | grep -q "UPGRADE"; then
-  pass "M13c: Discord gateway CONNECT tunnel succeeded (ws-proxy-fix #1570)"
+# Check each step of the handshake independently
+if echo "$dc_ws_tunnel" | grep -q "UPGRADED"; then
+  pass "M13c: WebSocket upgrade succeeded via CONNECT tunnel (#1570)"
 elif echo "$dc_ws_tunnel" | grep -q "HTTP_400"; then
   if [ "$STRICT_DISCORD_GATEWAY" = "1" ]; then
-    fail "M13c: Discord gateway got 400 — ws-proxy-fix CONNECT tunnel not working"
+    fail "M13c: Discord gateway got 400 — CONNECT tunnel not working"
   else
-    skip "M13c: Discord gateway got 400 — ws-proxy-fix may not be active (${dc_ws_tunnel:0:200})"
+    skip "M13c: Discord gateway got 400 — ws-proxy-fix may not be active"
   fi
 elif echo "$dc_ws_tunnel" | grep -qiE "EAI_AGAIN|getaddrinfo"; then
   if [ "$STRICT_DISCORD_GATEWAY" = "1" ]; then
-    fail "M13c: Discord gateway DNS resolution failure (${dc_ws_tunnel:0:200})"
+    fail "M13c: Discord gateway DNS failure (${dc_ws_tunnel:0:200})"
   else
-    skip "M13c: Discord gateway DNS resolution failure (${dc_ws_tunnel:0:200})"
+    skip "M13c: Discord gateway DNS failure (${dc_ws_tunnel:0:200})"
   fi
 elif echo "$dc_ws_tunnel" | grep -q "TIMEOUT"; then
   if [ "$STRICT_DISCORD_GATEWAY" = "1" ]; then
@@ -756,10 +854,22 @@ elif echo "$dc_ws_tunnel" | grep -q "ERROR"; then
   fi
 else
   if [ "$STRICT_DISCORD_GATEWAY" = "1" ]; then
-    fail "M13c: Discord gateway CONNECT tunnel returned unclassified result (${dc_ws_tunnel:0:200})"
+    fail "M13c: Discord gateway returned unclassified result (${dc_ws_tunnel:0:200})"
   else
-    skip "M13c: Discord gateway CONNECT tunnel returned unclassified result (${dc_ws_tunnel:0:200})"
+    skip "M13c: Discord gateway returned unclassified result (${dc_ws_tunnel:0:200})"
   fi
+fi
+
+if echo "$dc_ws_tunnel" | grep -q "HELLO op=10"; then
+  pass "M13d: Received Discord Hello (opcode 10) with heartbeat interval"
+elif echo "$dc_ws_tunnel" | grep -q "UPGRADED"; then
+  fail "M13d: Upgraded but never received Discord Hello"
+fi
+
+if echo "$dc_ws_tunnel" | grep -q "HEARTBEAT_ACK op=11"; then
+  pass "M13e: Sent Heartbeat, received ACK (opcode 11) — full round-trip verified"
+elif echo "$dc_ws_tunnel" | grep -q "SENT_HEARTBEAT"; then
+  fail "M13e: Sent Heartbeat but never received ACK"
 fi
 
 # M14 (negative): curl should be blocked by binary restriction
