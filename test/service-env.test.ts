@@ -163,6 +163,22 @@ describe("service environment", () => {
   });
 
   describe("proxy environment variables (issue #626)", () => {
+    function extractEmitHelper() {
+      const scriptPath = join(import.meta.dirname, "../scripts/nemoclaw-start.sh");
+      const block = execFileSync(
+        "sed",
+        ["-n", "/^emit_sandbox_sourced_file()/,/^}/p", scriptPath],
+        { encoding: "utf-8" },
+      );
+      if (!block.trim()) {
+        throw new Error(
+          "Failed to extract emit_sandbox_sourced_file from scripts/nemoclaw-start.sh — " +
+            "the function may have been moved or renamed",
+        );
+      }
+      return block.trimEnd();
+    }
+
     function extractProxyVars(env = {}) {
       const scriptPath = join(import.meta.dirname, "../scripts/nemoclaw-start.sh");
       const proxyBlock = execFileSync(
@@ -261,19 +277,23 @@ describe("service environment", () => {
         const scriptPath = join(import.meta.dirname, "../scripts/nemoclaw-start.sh");
         const persistBlock = execFileSync(
           "sed",
-          ["-n", "/^_PROXY_URL=/,/^chmod 644/p", scriptPath],
+          ["-n", "/^_PROXY_ENV_FILE=/,/emit_sandbox_sourced_file/p", scriptPath],
           { encoding: "utf-8" },
         );
         if (!persistBlock.trim()) {
           throw new Error(
             "Failed to extract proxy persistence block from scripts/nemoclaw-start.sh — " +
-              "the _PROXY_URL..chmod block may have been moved or renamed",
+              "the _PROXY_ENV_FILE..emit_sandbox_sourced_file block may have been moved or renamed",
           );
         }
+        const emitHelper = extractEmitHelper();
         const wrapper = [
           "#!/usr/bin/env bash",
+          emitHelper,
           'PROXY_HOST="10.200.0.1"',
           'PROXY_PORT="3128"',
+          '_PROXY_URL="http://${PROXY_HOST}:${PROXY_PORT}"',
+          '_NO_PROXY_VAL="localhost,127.0.0.1,::1,${PROXY_HOST}"',
           // Override the hardcoded path to use our temp dir
           persistBlock
             .trimEnd()
@@ -288,6 +308,15 @@ describe("service environment", () => {
         expect(envFile).toContain("export NO_PROXY=");
         expect(envFile).not.toContain("inference.local");
         expect(envFile).toContain("10.200.0.1");
+        // SECURITY: file must be read-only (#2181)
+        const proxyEnvPath = join(fakeDataDir, "proxy-env.sh");
+        let stat;
+        try {
+          stat = execFileSync("stat", ["-c", "%a", proxyEnvPath], { encoding: "utf-8" }).trim();
+        } catch {
+          stat = execFileSync("stat", ["-f", "%Lp", proxyEnvPath], { encoding: "utf-8" }).trim();
+        }
+        expect(stat).toBe("444");
       } finally {
         try {
           unlinkSync(tmpFile);
@@ -310,19 +339,23 @@ describe("service environment", () => {
         const scriptPath = join(import.meta.dirname, "../scripts/nemoclaw-start.sh");
         const persistBlock = execFileSync(
           "sed",
-          ["-n", "/^_PROXY_URL=/,/^chmod 644/p", scriptPath],
+          ["-n", "/^_PROXY_ENV_FILE=/,/emit_sandbox_sourced_file/p", scriptPath],
           { encoding: "utf-8" },
         );
         if (!persistBlock.trim()) {
           throw new Error(
             "Failed to extract proxy persistence block from scripts/nemoclaw-start.sh — " +
-              "the _PROXY_URL..chmod block may have been moved or renamed",
+              "the _PROXY_ENV_FILE..emit_sandbox_sourced_file block may have been moved or renamed",
           );
         }
+        const emitHelper = extractEmitHelper();
         const wrapper = [
           "#!/usr/bin/env bash",
+          emitHelper,
           'PROXY_HOST="10.200.0.1"',
           'PROXY_PORT="3128"',
+          '_PROXY_URL="http://${PROXY_HOST}:${PROXY_PORT}"',
+          '_NO_PROXY_VAL="localhost,127.0.0.1,::1,${PROXY_HOST}"',
           persistBlock
             .trimEnd()
             .replaceAll("/tmp/nemoclaw-proxy-env.sh", `${fakeDataDir}/proxy-env.sh`),
@@ -360,20 +393,24 @@ describe("service environment", () => {
         const scriptPath = join(import.meta.dirname, "../scripts/nemoclaw-start.sh");
         const persistBlock = execFileSync(
           "sed",
-          ["-n", "/^_PROXY_URL=/,/^chmod 644/p", scriptPath],
+          ["-n", "/^_PROXY_ENV_FILE=/,/emit_sandbox_sourced_file/p", scriptPath],
           { encoding: "utf-8" },
         );
         if (!persistBlock.trim()) {
           throw new Error(
             "Failed to extract proxy persistence block from scripts/nemoclaw-start.sh — " +
-              "the _PROXY_URL..chmod block may have been moved or renamed",
+              "the _PROXY_ENV_FILE..emit_sandbox_sourced_file block may have been moved or renamed",
           );
         }
+        const emitHelper = extractEmitHelper();
         const makeWrapper = (host) =>
           [
             "#!/usr/bin/env bash",
+            emitHelper,
             `PROXY_HOST="${host}"`,
             'PROXY_PORT="3128"',
+            `_PROXY_URL="http://\${PROXY_HOST}:\${PROXY_PORT}"`,
+            `_NO_PROXY_VAL="localhost,127.0.0.1,::1,\${PROXY_HOST}"`,
             persistBlock
               .trimEnd()
               .replaceAll("/tmp/nemoclaw-proxy-env.sh", `${fakeDataDir}/proxy-env.sh`),
@@ -403,7 +440,7 @@ describe("service environment", () => {
       }
     });
 
-    it("rm -f prevents symlink-following attack on proxy-env.sh", () => {
+    it("emit_sandbox_sourced_file prevents symlink-following attack on proxy-env.sh", () => {
       const fakeDataDir = join(tmpdir(), `nemoclaw-symlink-test-${process.pid}`);
       execFileSync("mkdir", ["-p", fakeDataDir]);
       const tmpFile = join(tmpdir(), `nemoclaw-symlink-write-test-${process.pid}.sh`);
@@ -411,23 +448,27 @@ describe("service environment", () => {
         const scriptPath = join(import.meta.dirname, "../scripts/nemoclaw-start.sh");
         const persistBlock = execFileSync(
           "sed",
-          ["-n", "/^_PROXY_URL=/,/^chmod 644/p", scriptPath],
+          ["-n", "/^_PROXY_ENV_FILE=/,/emit_sandbox_sourced_file/p", scriptPath],
           { encoding: "utf-8" },
         );
         if (!persistBlock.trim()) {
           throw new Error(
             "Failed to extract proxy persistence block from scripts/nemoclaw-start.sh — " +
-              "the _PROXY_URL..chmod block may have been moved or renamed",
+              "the _PROXY_ENV_FILE..emit_sandbox_sourced_file block may have been moved or renamed",
           );
         }
         const sensitiveFile = join(fakeDataDir, "sensitive");
         writeFileSync(sensitiveFile, "SECRET_DATA");
         const proxyEnvPath = join(fakeDataDir, "proxy-env.sh");
         execFileSync("ln", ["-sf", sensitiveFile, proxyEnvPath]);
+        const emitHelper = extractEmitHelper();
         const wrapper = [
           "#!/usr/bin/env bash",
+          emitHelper,
           'PROXY_HOST="10.200.0.1"',
           'PROXY_PORT="3128"',
+          '_PROXY_URL="http://${PROXY_HOST}:${PROXY_PORT}"',
+          '_NO_PROXY_VAL="localhost,127.0.0.1,::1,${PROXY_HOST}"',
           persistBlock.trimEnd().replaceAll("/tmp/nemoclaw-proxy-env.sh", proxyEnvPath),
         ].join("\n");
         writeFileSync(tmpFile, wrapper, { mode: 0o700 });
@@ -499,25 +540,29 @@ describe("service environment", () => {
         const scriptPath = join(import.meta.dirname, "../scripts/nemoclaw-start.sh");
         const persistBlock = execFileSync(
           "sed",
-          ["-n", "/^_PROXY_URL=/,/^chmod 644/p", scriptPath],
+          ["-n", "/^_PROXY_ENV_FILE=/,/emit_sandbox_sourced_file/p", scriptPath],
           { encoding: "utf-8" },
         );
         if (!persistBlock.trim()) {
           throw new Error(
-            "sed anchors (_PROXY_URL=…chmod 644) not found in nemoclaw-start.sh — test cannot run",
+            "sed anchors (_PROXY_ENV_FILE…emit_sandbox_sourced_file) not found in nemoclaw-start.sh — test cannot run",
           );
         }
+        const emitHelper = extractEmitHelper();
         const wrapper = [
           "#!/usr/bin/env bash",
           "set -euo pipefail",
+          emitHelper,
           `PROXY_HOST="10.200.0.1"`,
           `PROXY_PORT="3128"`,
+          `_PROXY_URL="http://\${PROXY_HOST}:\${PROXY_PORT}"`,
+          `_NO_PROXY_VAL="localhost,127.0.0.1,::1,\${PROXY_HOST}"`,
           `NODE_USE_ENV_PROXY=1`,
+          `_AXIOS_FIX_SCRIPT="${fakeFixScript}"`,
           "set +u",
           persistBlock
             .trimEnd()
-            .replaceAll("/tmp/nemoclaw-proxy-env.sh", `${fakeDataDir}/proxy-env.sh`)
-            .replaceAll("/opt/nemoclaw-blueprint/scripts/axios-proxy-fix.js", fakeFixScript),
+            .replaceAll("/tmp/nemoclaw-proxy-env.sh", `${fakeDataDir}/proxy-env.sh`),
         ].join("\n");
         // Create a fake fix script so the -f check passes
         writeFileSync(fakeFixScript, "// fake", { mode: 0o644 });
@@ -546,23 +591,27 @@ describe("service environment", () => {
         const scriptPath = join(import.meta.dirname, "../scripts/nemoclaw-start.sh");
         const persistBlock = execFileSync(
           "sed",
-          ["-n", "/^_PROXY_URL=/,/^chmod 644/p", scriptPath],
+          ["-n", "/^_PROXY_ENV_FILE=/,/emit_sandbox_sourced_file/p", scriptPath],
           { encoding: "utf-8" },
         );
         if (!persistBlock.trim()) {
           throw new Error("sed anchors not found in nemoclaw-start.sh — test cannot run");
         }
+        const emitHelper = extractEmitHelper();
         const wrapper = [
           "#!/usr/bin/env bash",
           "set -euo pipefail",
+          emitHelper,
           `PROXY_HOST="10.200.0.1"`,
           `PROXY_PORT="3128"`,
+          `_PROXY_URL="http://\${PROXY_HOST}:\${PROXY_PORT}"`,
+          `_NO_PROXY_VAL="localhost,127.0.0.1,::1,\${PROXY_HOST}"`,
           // NODE_USE_ENV_PROXY intentionally NOT set
+          `_AXIOS_FIX_SCRIPT="${fakeFixScript}"`,
           "set +u",
           persistBlock
             .trimEnd()
-            .replaceAll("/tmp/nemoclaw-proxy-env.sh", `${fakeDataDir}/proxy-env.sh`)
-            .replaceAll("/opt/nemoclaw-blueprint/scripts/axios-proxy-fix.js", fakeFixScript),
+            .replaceAll("/tmp/nemoclaw-proxy-env.sh", `${fakeDataDir}/proxy-env.sh`),
         ].join("\n");
         writeFileSync(fakeFixScript, "// fake", { mode: 0o644 });
         writeFileSync(tmpFile, wrapper, { mode: 0o700 });

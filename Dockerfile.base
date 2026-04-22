@@ -113,8 +113,9 @@ RUN mkdir -p /sandbox/.openclaw/agents/main/agent \
 
 # Pre-create shell init files for the sandbox user.
 # Runtime proxy config is written by the entrypoint to /tmp/nemoclaw-proxy-env.sh
-# (root-owned, sticky-bit protected) and sourced from here on every interactive
-# session.
+# (root-owned, mode 444, sticky-bit protected) and sourced from here on every
+# interactive session.
+# Ref: #2181 — the file must not be writable by the sandbox user.
 # hadolint ignore=SC2028
 RUN printf '%s\n' \
         '# Source runtime proxy config' \
