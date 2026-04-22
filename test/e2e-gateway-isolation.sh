@@ -110,14 +110,14 @@ else
   fail "startup update hints not disabled: $OUT"
 fi
 
-# ── Test 6: Config hash is not writable by sandbox ───────────────
+# ── Test 6: Config hash is writable by sandbox (mutable default) ──
 
-info "6. Config hash not writable by sandbox user"
-OUT=$(run_as_sandbox "echo fake > /sandbox/.openclaw/.config-hash 2>&1 || echo BLOCKED")
-if echo "$OUT" | grep -q "BLOCKED\|Permission denied"; then
-  pass "sandbox cannot tamper with config hash"
+info "6. Config hash writable by sandbox user (mutable default)"
+OUT=$(run_as_sandbox "test -w /sandbox/.openclaw/.config-hash && echo WRITABLE || echo BLOCKED")
+if echo "$OUT" | grep -q "WRITABLE"; then
+  pass "sandbox can write to config hash (mutable default)"
 else
-  fail "sandbox CAN write to config hash: $OUT"
+  fail "sandbox cannot write to config hash — should be writable: $OUT"
 fi
 
 # ── Test 7: gosu is installed ────────────────────────────────────
@@ -328,14 +328,14 @@ else
   fail "sandbox cannot write to .nemoclaw/config.json: $OUT"
 fi
 
-# ── Test 22: Sandbox user cannot create new files in .openclaw ────
+# ── Test 22: Sandbox user can create new files in .openclaw (mutable default) ──
 
-info "22. Sandbox user cannot create new files in .openclaw directory"
-OUT=$(run_as_sandbox "touch /sandbox/.openclaw/newfile 2>&1 || echo BLOCKED")
-if echo "$OUT" | grep -q "BLOCKED\|Permission denied"; then
-  pass "sandbox cannot create new files in .openclaw (root-owned dir)"
+info "22. Sandbox user can create new files in .openclaw directory (mutable default)"
+OUT=$(run_as_sandbox "touch /sandbox/.openclaw/newfile && rm -f /sandbox/.openclaw/newfile && echo OK || echo BLOCKED")
+if echo "$OUT" | grep -q "OK"; then
+  pass "sandbox can create new files in .openclaw (mutable default)"
 else
-  fail "sandbox CAN create new files in .openclaw: $OUT"
+  fail "sandbox cannot create new files in .openclaw — should be writable: $OUT"
 fi
 
 # ── Test 23: .bashrc sources proxy-env from /tmp ──────────────────
