@@ -159,17 +159,19 @@ else
 fi
 
 # Verify tools are on PATH
-if ! command -v openshell >/dev/null 2>&1; then
-  fail "openshell not found on PATH after install"
-  exit 1
+if [ "$INSTALL_OK" = "1" ]; then
+  if ! command -v openshell >/dev/null 2>&1; then
+    fail "openshell not found on PATH after install"
+    exit 1
+  fi
+  pass "openshell installed ($(openshell --version 2>&1 || echo unknown))"
+  
+  if ! command -v nemoclaw >/dev/null 2>&1; then
+    fail "nemoclaw not found on PATH after install"
+    exit 1
+  fi
+  pass "nemoclaw installed at $(command -v nemoclaw)"
 fi
-pass "openshell installed ($(openshell --version 2>&1 || echo unknown))"
-
-if ! command -v nemoclaw >/dev/null 2>&1; then
-  fail "nemoclaw not found on PATH after install"
-  exit 1
-fi
-pass "nemoclaw installed at $(command -v nemoclaw)"
 
 if [ "$INSTALL_OK" != "1" ]; then
   section "Skipping verification phases — initial install did not complete"
