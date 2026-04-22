@@ -1531,6 +1531,22 @@ fi`,
     expect(gitCalls).not.toMatch(/clone/);
     expect(gitCalls).not.toMatch(/fetch/);
   });
+
+  // Issue #2178 — when nvm installs a new Node, the user's parent shell still
+  // resolves `node` to the old version until the shell is reloaded. The
+  // installer's upgrade path must surface this loudly and adjacent to the
+  // "Node.js installed" line, not only in the generic bottom-of-output Next
+  // block where it's easy to miss.
+  it("install_nodejs upgrade path emits a Node-specific shell-reload hint", () => {
+    const script = fs.readFileSync(INSTALLER_PAYLOAD, "utf-8");
+    const installNodejs = script.match(/install_nodejs\(\)\s*\{[\s\S]*?\n\}/);
+    expect(installNodejs).not.toBeNull();
+    const body = installNodejs![0];
+    // Hint phrase + the exact reload command must live inside install_nodejs.
+    expect(body).toMatch(/current shell may still resolve/);
+    // The printf arg is double-quoted so the SHELL reference is backslash-escaped.
+    expect(body).toMatch(/exec \\"\\\$SHELL\\" -l/);
+  });
 });
 
 // ---------------------------------------------------------------------------

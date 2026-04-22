@@ -742,7 +742,17 @@ install_nodejs() {
   ensure_nvm_loaded --force
   nvm use 22 --silent
   nvm alias default 22 2>/dev/null || true
-  info "Node.js installed: $(node --version)"
+  local installed_version
+  installed_version="$(node --version)"
+  info "Node.js installed via nvm: ${installed_version} (default alias)"
+  # Surface the shell-reload requirement right next to the install line so the
+  # user isn't left thinking the new Node is already active in their terminal.
+  # The installer runs in a subshell; the user's parent shell still resolves
+  # `node` via the pre-install PATH until they re-source their profile.
+  # See issue #2178.
+  warn "Your current shell may still resolve \`node\` to an older version until you reload it."
+  printf "        To activate ${installed_version} in this shell:\n"
+  printf "          exec \"\$SHELL\" -l        # (or) nvm use 22\n"
 }
 
 # ---------------------------------------------------------------------------
