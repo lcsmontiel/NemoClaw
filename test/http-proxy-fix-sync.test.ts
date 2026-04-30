@@ -16,6 +16,12 @@ describe("http-proxy-fix heredoc sync (#2109)", () => {
     expect(content.length).toBeGreaterThan(0);
     expect(content).toContain("(function () {");
     expect(content).toContain("http.request = function");
+    // fetch() custom-dispatcher fix (the Teams Graph API path — see PR
+    // body). Asserted explicitly because the byte-equality test below
+    // only proves the two copies match — it cannot detect "both copies
+    // lost the wrapper".
+    expect(content).toContain("globalThis.fetch = function");
+    expect(content).toContain("delete newOpts.dispatcher");
   });
 
   it("nemoclaw-start.sh embeds the fix via a HTTP_PROXY_FIX_EOF heredoc", () => {

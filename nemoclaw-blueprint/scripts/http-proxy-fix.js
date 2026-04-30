@@ -180,4 +180,64 @@
     }
     return origRequest.apply(http, arguments);
   };
+
+  // ── fetch() custom-dispatcher fix ────────────────────────────────
+  // Problem:
+  //   OpenClaw's Microsoft Teams adapter calls the Graph API via native
+  //   fetch() with a custom undici dispatcher (`opts.dispatcher`). The
+  //   custom dispatcher routes the request through its own connection
+  //   pool — bypassing Node's default EnvHttpProxyAgent, which is the
+  //   only thing routing HTTPS traffic through the OpenShell L7 proxy.
+  //   Direct egress to e.g. graph.microsoft.com is blocked by the
+  //   sandbox network namespace and surfaces as ECONNREFUSED. The bot
+  //   then silently drops channel @mentions (DMs work because the
+  //   webhook payload carries the message body and no Graph call is
+  //   needed).
+  //
+  // Fix:
+  //   When fetch() is called with a custom dispatcher and an HTTPS URL,
+  //   strip the dispatcher and let the default EnvHttpProxyAgent handle
+  //   the request through the proxy. Non-HTTPS URLs are left untouched
+  //   — direct HTTP traffic inside the sandbox netns still works, and
+  //   any non-proxy use of the dispatcher option remains honored. A
+  //   one-shot console.warn makes the override discoverable without
+  //   spamming on every call (the Teams adapter can call this many
+  //   times per minute under load).
+  //
+  // fetch() input forms (handled in this order):
+  //   - string                — typeof === 'string'
+  //   - URL object            — has a string .href
+  //   - Request object        — has a string .url
+  //   - anything else         — passed through to origFetch unchanged
+  var origFetch = globalThis.fetch;
+  if (typeof origFetch === 'function') {
+    var dispatcherStripWarned = false;
+    globalThis.fetch = function (url, opts) {
+      if (opts && opts.dispatcher) {
+        var urlStr = '';
+        if (typeof url === 'string') {
+          urlStr = url;
+        } else if (url && typeof url.href === 'string') {
+          urlStr = url.href;
+        } else if (url && typeof url.url === 'string') {
+          urlStr = url.url;
+        }
+        if (urlStr.startsWith('https://')) {
+          if (!dispatcherStripWarned) {
+            dispatcherStripWarned = true;
+            console.warn(
+              '[nemoclaw http-proxy-fix] stripping custom fetch() dispatcher for HTTPS URL ' +
+                urlStr +
+                ' so EnvHttpProxyAgent can route through the L7 proxy. ' +
+                'Subsequent strips suppressed.',
+            );
+          }
+          var newOpts = Object.assign({}, opts);
+          delete newOpts.dispatcher;
+          return origFetch.call(this, url, newOpts);
+        }
+      }
+      return origFetch.apply(this, arguments);
+    };
+  }
 })();
