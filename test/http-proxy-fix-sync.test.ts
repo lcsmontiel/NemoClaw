@@ -53,6 +53,15 @@ describe("http-proxy-fix preload sync (#2109)", () => {
       expect(result.stdout).toContain(`--require ${fixPath}`);
       const generated = fs.readFileSync(fixPath, "utf-8");
       expect(generated).not.toContain("axios-proxy-fix.js");
+      // Preload must include both wrappers — http.request handles the
+      // FORWARD-mode rewrite (axios / follow-redirects / proxy-from-env)
+      // and globalThis.fetch handles the custom-undici-dispatcher case
+      // (OpenClaw Teams adapter → Microsoft Graph API). Asserting both
+      // here catches accidental regression if either wrapper is removed
+      // while editing the canonical file.
+      expect(generated).toContain("http.request = function");
+      expect(generated).toContain("globalThis.fetch = function");
+      expect(generated).toContain("delete newOpts.dispatcher");
       expect((fs.statSync(fixPath).mode & 0o777).toString(8)).toBe("444");
     } finally {
       fs.rmSync(tempDir, { recursive: true, force: true });
