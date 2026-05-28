@@ -20,6 +20,8 @@ Run `source ~/.bashrc` (or `source ~/.zshrc` for zsh), or open a new terminal wi
 When installing from a source checkout with `npm install`, NemoClaw first tries `npm link`.
 If the global npm prefix is not writable, it writes a managed shim to `~/.local/bin/nemoclaw` instead.
 Add `~/.local/bin` to your `PATH` if the command is still not found.
+Source-checkout installs also bootstrap OpenShell when it is missing before running preflight.
+If a source install still reports that `openshell` is not available, re-run the installer from the repository root and check that `~/.local/bin` is on your `PATH`.
 
 ### Installer fails on unsupported platform
 
@@ -67,6 +69,13 @@ On macOS with Docker Desktop, open the Docker Desktop application and wait for i
 On Linux, if the Docker daemon is running but you see "permission denied" errors, your user may not be in the `docker` group.
 The installer can add your user to the group, but Linux does not activate that membership in the current shell automatically.
 Add your user and activate the group in the current shell:
+
+**Docker group access:**
+
+NemoClaw needs Docker access.
+On personal Linux development machines, adding your user to the `docker` group is the standard way to run Docker without sudo.
+Members of the `docker` group can control the daemon with root-level impact, so grant this access only to trusted local accounts; on shared or managed systems, use your organization's approved Docker access path.
+For background, review Docker's [daemon attack surface guidance](https://docs.docker.com/engine/security/#docker-daemon-attack-surface).
 
 ```console
 $ sudo usermod -aG docker $USER
@@ -202,7 +211,7 @@ $ NEMOCLAW_GATEWAY_BIND_ADDRESS=0.0.0.0 NEMOCLAW_GATEWAY_PORT=8990 nemoclaw onbo
 Use `NEMOCLAW_GATEWAY_BIND_ADDRESS=0.0.0.0` only when other hosts on the
 network should be able to reach the gateway.
 
-See Environment Variables (use the `nemoclaw-user-reference` skill) for the full list of port overrides.
+See [Environment Variables](commands.md#environment-variables) for the full list of port overrides.
 
 ### Running multiple sandboxes simultaneously
 
@@ -328,6 +337,21 @@ $ sudo ufw allow from "$SUBNET" to any port 8080 proto tcp
 $ nemoclaw onboard
 ```
 
+### `connect` exits because the gateway is down
+
+`nemoclaw <name> connect` checks the OpenShell gateway before it tries dashboard forwarding, SSH, or inference repair.
+If the gateway is not reachable, the command exits early and prints recovery guidance.
+
+Start the gateway or resume onboarding, then retry:
+
+```console
+$ openshell gateway start --name nemoclaw
+$ nemoclaw onboard --resume
+$ nemoclaw <name> connect
+```
+
+Run `nemoclaw status` for a broader gateway health report.
+
 ### Invalid sandbox name
 
 Sandbox names must be lowercase, start with a letter, contain only letters, numbers, and internal hyphens, and end with a letter or number.
@@ -347,6 +371,15 @@ On DGX machines, sandbox creation can fail if the gateway's DNS has not finished
 Run `nemoclaw onboard` to retry.
 The wizard cleans up stale port forwards and waits for gateway readiness automatically.
 
+### GPU setup fails with a placeholder GPU name
+
+On Windows or WSL hosts, some systems report a placeholder display adapter name even when no NVIDIA GPU firmware is present.
+NVIDIA NIM and GPU-backed sandbox setup require a real NVIDIA GPU.
+If NemoClaw rejects the detected GPU name during preflight, select a CPU or remote inference provider, or move the setup to a host with a supported NVIDIA GPU and current drivers.
+
+Jetson hosts can still run NemoClaw, but sandbox GPU passthrough is not supported there.
+If onboarding reports that sandbox GPU passthrough is unavailable on Jetson, rerun onboarding without `--sandbox-gpu`.
+
 ### Colima socket not detected (macOS)
 
 Newer Colima versions use the XDG base directory (`~/.config/colima/default/docker.sock`) instead of the legacy path (`~/.colima/default/docker.sock`).
@@ -364,6 +397,9 @@ Default Colima ships with 2 vCPU and 2 GiB of memory, which is not enough headro
 On macOS Apple Silicon, the build can stall part-way through with no progress and no error, leaving the wizard waiting indefinitely.
 
 Preflight inspects `docker info` for `NCPU` and `MemTotal` and prints a warning when the runtime falls below 4 vCPU or 8 GiB.
+In interactive onboarding, the warning prompt defaults to abort, so pressing Enter stops the run before the sandbox build reaches the likely stall point.
+Type `y` only when you intentionally want to continue on the smaller runtime.
+Non-interactive onboarding prints the warning and continues.
 On Colima, raise the resources before re-running onboard:
 
 ```console
@@ -514,7 +550,9 @@ Follow these steps to reconnect.
    $ nemoclaw tunnel start
    ```
 
-   Telegram, Discord, and Slack are handled by OpenShell-managed channel messaging configured at onboarding, not by a separate bridge process from `nemoclaw tunnel start`. To pause a single bridge without destroying the sandbox, use `nemoclaw <name> channels stop <channel>`.
+   OpenShell-managed channel messaging handles Telegram, Discord, Slack, WeChat, and WhatsApp at onboarding, not through a separate bridge process from `nemoclaw tunnel start`.
+   WeChat and WhatsApp are experimental.
+   To pause a single bridge without destroying the sandbox, use `nemoclaw <name> channels stop <channel>`.
 
 **If the sandbox does not recover:**
 
@@ -609,6 +647,11 @@ If the backend is healthy but the auth proxy is `unauthorized` or `unreachable`,
 
 If the endpoint is correct but requests still fail, check for network policy rules that may block the connection.
 Then verify the credential and base URL for the provider you selected during onboarding.
+
+If you entered an AWS Bedrock Runtime URL such as `https://bedrock-runtime.us-east-1.amazonaws.com` in the **Other Anthropic-compatible endpoint** flow, NemoClaw auto-detects it and routes sandbox traffic through a host-local adapter.
+Use the raw Bedrock Runtime host, not an Anthropic `/v1/messages` path, and verify that the model ID or inference profile ID is valid for that region.
+For auth, export `AWS_BEARER_TOKEN_BEDROCK`, `AWS_PROFILE`, or standard IAM environment credentials before onboarding; if you paste a key at the `COMPATIBLE_ANTHROPIC_API_KEY` prompt, NemoClaw uses it only as the adapter's Bedrock bearer token.
+Region errors usually mean the pasted endpoint region, `AWS_REGION`, `AWS_DEFAULT_REGION`, or the model/inference profile ID do not match.
 
 For Ollama, vLLM, NIM, and compatible-endpoint setup, the default timeout is 180 seconds.
 If large prompts still cause timeouts, increase it with `NEMOCLAW_LOCAL_INFERENCE_TIMEOUT` before re-running onboard:
@@ -709,7 +752,7 @@ $ nemoclaw <name> rebuild
 ### `openclaw channels add` or `remove` is blocked inside the sandbox
 
 This is expected.
-The messaging channel list is frozen into the sandbox's container image when the image is built during `nemoclaw onboard` or `nemoclaw rebuild` (the selected channel names are passed to the `docker build` as `NEMOCLAW_MESSAGING_CHANNELS_B64` and written into `/sandbox/.openclaw/openclaw.json` as part of the image).
+The messaging channel list is frozen into the sandbox's container image when the image is built during `nemoclaw onboard` or `nemoclaw rebuild` (the selected channel names are passed to the `docker build` as `NEMOCLAW_MESSAGING_CHANNELS_B64` and written into agent config such as `/sandbox/.openclaw/openclaw.json` for OpenClaw or `/sandbox/.hermes/.env` for Hermes).
 Changes made inside the running sandbox do not persist across rebuilds, so `openclaw channels` commands that mutate the config are intercepted.
 NemoClaw's sandbox entrypoint installs a guard that intercepts `openclaw channels <add|remove>` and prints an actionable error pointing at the host-side commands below, instead of letting the call fail deep in the binary with a raw `EACCES` trace.
 
@@ -717,12 +760,39 @@ Run the equivalent host-side command instead:
 
 ```console
 $ nemoclaw <sandbox> channels list
-$ nemoclaw <sandbox> channels add <telegram|discord|slack>
-$ nemoclaw <sandbox> channels remove <telegram|discord|slack>
+$ nemoclaw <sandbox> channels add <telegram|discord|slack|wechat|whatsapp>
+$ nemoclaw <sandbox> channels remove <telegram|discord|slack|wechat|whatsapp>
 ```
 
-`channels add` registers credentials with the OpenShell gateway and `channels remove` clears them; both offer to rebuild the sandbox so the image reflects the new channel set.
+`channels add` registers credentials with the OpenShell gateway and `channels remove` clears them.
+Both offer to rebuild the sandbox so the image reflects the new channel set.
 In non-interactive mode (`NEMOCLAW_NON_INTERACTIVE=1`), the commands stage the change and leave the rebuild to a follow-up `nemoclaw <sandbox> rebuild`.
+WeChat and WhatsApp are experimental.
+Review Messaging Channels (use the `nemoclaw-user-manage-sandboxes` skill) before enabling them.
+
+WeChat captures its bot token through a host-side QR scan during `nemoclaw onboard` or `channels add wechat`.
+You scan the iLink QR from WeChat on your phone and NemoClaw registers the captured token with the OpenShell gateway.
+
+WhatsApp pairs entirely inside the sandbox.
+NemoClaw advertises WhatsApp for OpenClaw and Hermes sandboxes after you add the channel on the host.
+Run `openclaw channels login --channel whatsapp` inside OpenClaw sandboxes, or run `hermes whatsapp` inside Hermes sandboxes.
+
+### `scripts/rcf_patch.py` is missing from the blueprint
+
+`scripts/rcf_patch.py` is intentionally absent from current NemoClaw blueprints.
+Older QA plans used that helper for a Dockerfile "Patch-4" test that corrupted the build-time `replaceConfigFile` monkey-patch and expected `ERROR: Patch 4 (replaceConfigFile EACCES) not applied`.
+The old Patch-4 fail-closed test no longer applies because NemoClaw no longer patches OpenClaw's compiled `replaceConfigFile` source at image build time.
+
+Current sandboxes use a mutable-default config model instead.
+Before a reviewed host-side lockdown, `/sandbox/.openclaw/openclaw.json` is group-writable by the sandbox and gateway users, so OpenClaw config mutations should write normally rather than requiring an EACCES swallow.
+After lockdown, runtime config mutations should fail cleanly or route users to the supported host-side NemoClaw command.
+
+To validate this area now, use the config lifecycle tests instead of looking for `rcf_patch.py`:
+
+```console
+$ npm run build:cli
+$ npm test -- test/repro-2681-group-writable.test.ts
+```
 
 ### `openclaw config set` or `unset` is blocked inside the sandbox
 
@@ -790,9 +860,62 @@ In that case:
 - inspect gateway logs and blocked requests with `openshell term`
 - treat the failure as a native Discord gateway problem, not as a bridge startup problem
 
+### Discord preset validation behind a proxy
+
+The built-in Discord policy preset intentionally allows the Node binaries used by the messaging runtime and does not allow `curl`.
+As a result, `curl -s https://discord.com` failing, hanging, or printing no output is not proof that the Discord preset is broken.
+
+Behind the OpenShell proxy, direct DNS-only checks can also be the wrong signal.
+For example, `dns.resolve("gateway.discord.gg")` can fail even when HTTPS requests routed through the proxy are healthy.
+
+Use Node HTTPS as the manual REST probe:
+
+```console
+$ node - <<'NODE'
+const https = require("node:https");
+
+https
+  .get("https://discord.com/api/v10/gateway", (res) => {
+    console.log(`${res.statusCode} ${res.statusMessage || ""}`.trim());
+    res.resume();
+  })
+  .on("error", (err) => {
+    console.error(err.message);
+    process.exitCode = 1;
+  });
+NODE
+```
+
+To check Discord CDN egress, use the same Node HTTPS path:
+
+```console
+$ node - <<'NODE'
+const https = require("node:https");
+
+https
+  .get("https://cdn.discordapp.com/", (res) => {
+    console.log(`${res.statusCode} ${res.statusMessage || ""}`.trim());
+    res.resume();
+  })
+  .on("error", (err) => {
+    console.error(err.message);
+    process.exitCode = 1;
+  });
+NODE
+```
+
+Any HTTP status from these probes means the Node process reached the endpoint; the exact status can vary by unauthenticated path.
+If the Node REST probe works but the Discord channel is still unhealthy, investigate the native gateway path instead of widening the preset.
+Check the gateway logs and blocked-request output with `openshell term`, and look for `gateway.discord.gg` connection or WebSocket upgrade failures.
+
 ### Messaging bridge appears running but no messages arrive
 
 Bot tokens for Telegram (`getUpdates`), Discord (gateway), and Slack (Socket Mode) only allow one active consumer per token. If two NemoClaw sandboxes are configured with the same bot token, each one kicks the other off its polling connection and neither delivers messages. `nemoclaw status` still reports the bridge as running because the gateway process itself is alive.
+
+For Telegram group chats, first check BotFather privacy mode.
+New Telegram bots default to privacy mode enabled, which prevents group messages from reaching `getUpdates` even when the user mentions the bot.
+In @BotFather, run `/setprivacy`, choose the bot, and choose **Disable**.
+Then remove the bot from the affected group and add it back; Telegram applies the privacy-mode change to group delivery only after the bot rejoins.
 
 To diagnose, open a shell in the sandbox and inspect the gateway log:
 
@@ -977,6 +1100,38 @@ $ nemoclaw onboard
 Docker Desktop, WSL, and hosts without the OpenShell Docker network use different routing models.
 In those cases NemoClaw treats an unavailable sandbox-side probe as non-blocking and relies on the regular proxy health check.
 
+### `host.docker.internal` does not reliably reach the host from the sandbox
+
+Configuring an inference provider with a base URL like
+`http://host.docker.internal:11434/v1` does not reliably reach a host Ollama
+service from inside the OpenShell sandbox.
+OpenShell runs sandboxes inside a k3s network, where `host.docker.internal` is
+not a portable host-service route. Depending on the platform, it may fail DNS
+resolution or resolve to an internal gateway/bridge address where the host's
+port `11434` is not forwarded. The sandbox then sees a DNS failure or
+`connection refused`:
+
+```console
+$ getent hosts host.docker.internal
+172.17.0.1      host.docker.internal host.openshell.internal
+$ no_proxy=host.docker.internal curl -v http://host.docker.internal:11434/api/tags
+* connect to 172.17.0.1 port 11434 failed: Connection refused
+```
+
+For local Ollama, use the auth-proxy URL that NemoClaw's "Local Ollama" onboard
+option configures automatically:
+
+```text
+http://host.openshell.internal:11435/v1
+```
+
+`host.openshell.internal` resolves to the same gateway IP, and the
+[token-gated Ollama auth proxy](#ollama-auth-proxy-did-not-start) binds port
+`11435` there and forwards requests to `127.0.0.1:11434` on the host.
+If you need a different host service exposed to the sandbox, route it through
+the OpenShell gateway rather than relying on `host.docker.internal`.
+See issue [#3136](https://github.com/NVIDIA/NemoClaw/issues/3136).
+
 ### Local inference health check resolves to IPv6
 
 Local inference health checks now use `127.0.0.1` instead of `localhost`.
@@ -1032,7 +1187,10 @@ Recent NVIDIA Container Toolkit installs configure the Docker daemon for Contain
 If no `nvidia.com/gpu` CDI spec has been generated on the host yet, gateway start fails with `Docker responded with status code 500: CDI device injection failed: unresolvable CDI devices nvidia.com/gpu=all`.
 The standard NemoClaw installer detects this gap before onboarding, first tries to enable the NVIDIA CDI refresh systemd units, and falls back to generating the spec directly with `nvidia-ctk`.
 If you run `nemoclaw onboard` directly, preflight prints the manual remediation instead.
-The underlying fix is the same on any Docker host whose `docker info` advertises a non-empty `CDISpecDirs`.
+The native Linux fix is the same on Docker hosts whose `docker info` advertises a non-empty `CDISpecDirs`.
+On WSL with Docker Desktop, Docker may advertise CDI directories even though `--device nvidia.com/gpu=all` is not usable from the WSL distro.
+For that runtime, NemoClaw skips Linux CDI repair and uses Docker's `--gpus` compatibility path for sandbox GPU access.
+This compatibility path can be retired once Docker Desktop exposes usable `nvidia.com/gpu` CDI specs inside WSL, or once OpenShell no longer requires host-visible CDI specs for Docker Desktop WSL GPU passthrough.
 
 Enable the refresh units, verify they list `nvidia.com/gpu` entries, then rerun onboarding:
 
@@ -1048,6 +1206,12 @@ If the refresh units are unavailable or do not generate CDI devices, generate th
 $ sudo mkdir -p /etc/cdi
 $ sudo nvidia-ctk cdi generate --output=/etc/cdi/nvidia.yaml
 $ nvidia-ctk cdi list
+```
+
+On WSL with Docker Desktop, confirm Docker Desktop WSL integration is enabled for your distro and verify Docker GPU access from WSL:
+
+```console
+$ docker run --rm --gpus all nvcr.io/nvidia/k8s/cuda-sample:nbody nbody -gpu -benchmark
 ```
 
 If GPU passthrough is not required on this host, rerun onboarding with `--no-gpu` instead.
@@ -1121,6 +1285,20 @@ $ wsl -d Ubuntu
 $ docker info
 ```
 
+### Windows-host Ollama is installed but not shown during onboarding
+
+When NemoClaw runs inside WSL, it checks both the Windows-host Ollama HTTP endpoint and the Windows `ollama.exe` process.
+If Ollama is installed but the daemon is not reachable through `host.docker.internal:11434`, the wizard should still offer a start or restart action.
+
+If the Windows-host option does not appear, confirm that PowerShell interop is enabled in WSL and that Windows can locate Ollama:
+
+```console
+$ powershell.exe -NoProfile -Command "Get-Process ollama -ErrorAction SilentlyContinue"
+```
+
+If the process is missing, start Ollama from Windows and rerun onboarding.
+If the process exists but the endpoint is unreachable, use the restart action when the wizard offers it, or restart Ollama from Windows with `OLLAMA_HOST=0.0.0.0:11434`.
+
 ### Ollama inference fails or hangs in WSL
 
 Ollama configures context length based on your hardware.
@@ -1179,7 +1357,8 @@ Skills are blocked for one of three reasons.
 Skills that require macOS-only binaries cannot be enabled on Brev.
 Skills that require additional CLI binaries require a custom sandbox image rebuild.
 
-For credentials, use the supported host-side setup flow. Re-run onboarding for inference or Brave Search credentials, or use `nemoclaw <name> channels add <telegram|discord|slack>` for messaging channels.
+For credentials, use the supported host-side setup flow.
+Re-run onboarding for inference or Brave Search credentials, or use `nemoclaw <name> channels add <telegram|discord|slack|wechat|whatsapp>` for messaging channels.
 To add a binary to the sandbox image, update the sandbox `Dockerfile.base` to install the required package, then rebuild:
 
 ```console
@@ -1204,7 +1383,7 @@ If you see this error, use the host-side config command instead:
 $ nemoclaw <name> config set --key <dotpath> --value '<json-or-string>' --restart
 ```
 
-Refer to Commands (use the `nemoclaw-user-reference` skill) for the full list of supported configuration keys.
+Refer to [Commands](commands.md) for the full list of supported configuration keys.
 
 ### OpenClaw dashboard is unreachable after extended uptime on Brev
 

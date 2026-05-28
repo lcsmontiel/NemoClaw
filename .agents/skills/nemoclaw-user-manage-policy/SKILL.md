@@ -1,12 +1,13 @@
 ---
 name: "nemoclaw-user-manage-policy"
 description: "Adds, removes, or modifies allowed endpoints in the sandbox policy. Use when customizing network policy, changing egress rules, or configuring sandbox endpoint access. Trigger keywords - customize nemoclaw network policy, sandbox egress policy configuration, nemoclaw integration policy examples, post-install policy setup, openshell approval workflow, policy preset, nemoclaw approve network requests, sandbox egress approval tui."
+license: "Apache-2.0"
 ---
 
 <!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 
-# Customize the NemoClaw Sandbox Network Policy
+# Customize the Sandbox Network Policy
 
 ## Gotchas
 
@@ -29,7 +30,7 @@ Apply a custom NemoClaw preset with `nemoclaw <sandbox> policy-add --from-file`.
 Do not rely on `host.docker.internal` as a general host-service path because it bypasses the OpenShell policy path and may not be reachable in every sandbox runtime.
 See Agent cannot reach a host-side HTTP service (use the `nemoclaw-user-reference` skill).
 
-## Step 1: Static Changes
+## Static Changes
 
 Static changes modify the baseline policy file and take effect after the next sandbox creation.
 
@@ -37,17 +38,10 @@ Static changes modify the baseline policy file and take effect after the next sa
 
 Open `nemoclaw-blueprint/policies/openclaw-sandbox.yaml` and add or modify endpoint entries.
 
-If you only need one of the built-in presets, use `nemoclaw <name> policy-add` instead of editing YAML by hand:
+If you want a built-in preset to be part of the baseline policy, merge its `network_policies` entries into this file and re-run `nemoclaw onboard`.
 
-```console
-$ nemoclaw my-assistant policy-add
-```
-
-To remove a previously applied preset, use `nemoclaw <name> policy-remove`:
-
-```console
-$ nemoclaw my-assistant policy-remove
-```
+If you only need to apply a preset to a running sandbox, use `nemoclaw <name> policy-add` under [Dynamic Changes](#dynamic-changes).
+That updates the live policy and does not edit `openclaw-sandbox.yaml`.
 
 Use a manual YAML edit when you need to allow custom hosts that are not covered by a preset, such as an internal API or a weather service.
 
@@ -86,7 +80,7 @@ If you maintain a custom blueprint, you can add extra policy entries under `comp
 NemoClaw validates those entries with the same policy schema used by preset files, fetches the live policy during sandbox creation, merges the additions into `network_policies`, and applies the merged policy through OpenShell.
 The applied additions are recorded in the run metadata so you can audit which blueprint-level policy entries were active for that sandbox run.
 
-## Step 2: Dynamic Changes
+## Dynamic Changes
 
 Dynamic changes apply a policy update to a running sandbox without restarting it.
 
@@ -161,11 +155,11 @@ $ openshell term
 
 This is useful when you want to test a destination before deciding whether it belongs in a permanent preset or custom policy file.
 
-## Step 3: Policy Presets
+## Policy Presets
 
 NemoClaw ships preset policy files for common integrations in `nemoclaw-blueprint/policies/presets/`.
 Apply a preset as-is or use it as a starting template for a custom policy.
-For guided post-install examples, see Common Integration Policy Examples (use the `nemoclaw-user-manage-policy` skill).
+For guided post-install examples, see [Common Integration Policy Examples](references/integration-policy-examples.md).
 
 During onboarding, the policy tier (use the `nemoclaw-user-reference` skill) you select determines which presets are enabled by default.
 You can add or remove individual presets in the interactive preset screen that follows tier selection.
@@ -182,10 +176,13 @@ Available presets:
 | `jira` | Atlassian Jira API |
 | `local-inference` | Local Ollama and vLLM through the host gateway |
 | `npm` | npm and Yarn registries |
+| `openclaw-pricing` | OpenClaw model-pricing reference fetch (LiteLLM and OpenRouter) |
 | `outlook` | Microsoft 365 and Outlook |
 | `pypi` | Python Package Index |
 | `slack` | Slack API and webhooks |
 | `telegram` | Telegram Bot API |
+| `wechat` | WeChat (personal) iLink Bot API (experimental) |
+| `whatsapp` | WhatsApp Web messaging (experimental) |
 
 To apply a preset to a running sandbox:
 
@@ -230,7 +227,7 @@ See Commands (use the `nemoclaw-user-reference` skill) for the full flag referen
 
 `nemoclaw <name> rebuild` reapplies every policy preset to the recreated sandbox, so presets survive an agent-version upgrade without manual reapplication.
 
-## Step 4: Custom Preset Files
+## Custom Preset Files
 
 Apply a user-authored preset YAML to a running sandbox without editing the baseline or dropping to `openshell policy set`.
 
@@ -282,23 +279,18 @@ Fix the failing file and re-run the command to continue.
 Custom preset hosts bypass NemoClaw's review process and can widen sandbox egress to arbitrary destinations.
 Review every host in a custom preset before applying it, especially when the file originates outside your team.
 
-### Remove a Custom Preset
-
-Custom presets applied with `--from-file` or `--from-dir` are recorded in the NemoClaw sandbox registry alongside their full YAML content, so they can be removed by name — the original file does not need to be kept on disk:
-
-```console
-$ nemoclaw my-assistant policy-remove my-internal-api --yes
-```
-
-`policy-remove` accepts both built-in and custom preset names. Run `nemoclaw <name> policy-list` to see every preset currently applied to the sandbox.
+Load [references/customize-network-policy-details.md](references/customize-network-policy-details.md) for detailed steps on Remove a Custom Preset.
 
 ## References
 
 - **[references/integration-policy-examples.md](references/integration-policy-examples.md)** — Guides users through common post-install integration policy setup for maintained NemoClaw policy presets, including Outlook, messaging channels, GitHub, Jira, Brave Search, package managers, Hugging Face, local inference, and OpenShell approval workflows.
 - **Load [references/approve-network-requests.md](references/approve-network-requests.md)** when approving or denying sandbox egress requests, managing blocked network calls, or using the approval TUI. Reviews and approves blocked agent network requests in the TUI.
+- **Load [references/customize-network-policy-details.md](references/customize-network-policy-details.md)** when you need detailed steps for Remove a Custom Preset.
 
 ## Related Skills
 
+- [Approve or Deny Agent Network Requests](references/approve-network-requests.md) for real-time operator approval.
+- [Common Integration Policy Examples](references/integration-policy-examples.md) for maintained preset examples such as Outlook, messaging, GitHub, Jira, Brave Search, package managers, Hugging Face, and local inference.
 - `nemoclaw-user-reference` — Network Policies (use the `nemoclaw-user-reference` skill) for the full baseline policy reference
 - OpenShell [Policy Schema](https://docs.nvidia.com/openshell/latest/reference/policy-schema.html) for the full YAML policy schema reference.
 - OpenShell [Sandbox Policies](https://docs.nvidia.com/openshell/latest/sandboxes/policies.html) for applying, iterating, and debugging policies at the OpenShell layer.

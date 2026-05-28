@@ -41,17 +41,10 @@ Static changes modify the baseline policy file and take effect after the next sa
 
 Open `nemoclaw-blueprint/policies/openclaw-sandbox.yaml` and add or modify endpoint entries.
 
-If you only need one of the built-in presets, use `nemoclaw <name> policy-add` instead of editing YAML by hand:
+If you want a built-in preset to be part of the baseline policy, merge its `network_policies` entries into this file and re-run `nemoclaw onboard`.
 
-```console
-$ nemoclaw my-assistant policy-add
-```
-
-To remove a previously applied preset, use `nemoclaw <name> policy-remove`:
-
-```console
-$ nemoclaw my-assistant policy-remove
-```
+If you only need to apply a preset to a running sandbox, use `nemoclaw <name> policy-add` under [Dynamic Changes](#dynamic-changes).
+That updates the live policy and does not edit `openclaw-sandbox.yaml`.
 
 Use a manual YAML edit when you need to allow custom hosts that are not covered by a preset, such as an internal API or a weather service.
 
@@ -186,10 +179,13 @@ Available presets:
 | `jira` | Atlassian Jira API |
 | `local-inference` | Local Ollama and vLLM through the host gateway |
 | `npm` | npm and Yarn registries |
+| `openclaw-pricing` | OpenClaw model-pricing reference fetch (LiteLLM and OpenRouter) |
 | `outlook` | Microsoft 365 and Outlook |
 | `pypi` | Python Package Index |
 | `slack` | Slack API and webhooks |
 | `telegram` | Telegram Bot API |
+| `wechat` | WeChat (personal) iLink Bot API (experimental) |
+| `whatsapp` | WhatsApp Web messaging (experimental) |
 
 To apply a preset to a running sandbox:
 

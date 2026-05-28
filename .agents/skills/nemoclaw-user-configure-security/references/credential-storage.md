@@ -1,6 +1,6 @@
 <!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
 <!-- SPDX-License-Identifier: Apache-2.0 -->
-# NemoClaw Credential Storage
+# Credential Storage
 
 NemoClaw does not persist provider credentials to host disk.
 The OpenShell gateway is the only system of record for stored credentials.
@@ -107,4 +107,4 @@ On the next run NemoClaw prompts again unless the credential is supplied through
 
 ## Related Files
 
-For the broader sandbox security model and operational trade-offs, see Security Best Practices (use the `nemoclaw-user-configure-security` skill) and Architecture (use the `nemoclaw-user-reference` skill).
+For the broader sandbox security model and operational trade-offs, see [Security Best Practices](best-practices.md) and Architecture (use the `nemoclaw-user-reference` skill).

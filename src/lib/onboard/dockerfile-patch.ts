@@ -50,6 +50,8 @@ export function patchStagedDockerfile(
   wechatConfig: LooseObject = {},
   darwinVmCompat = false,
   inferenceBaseUrlOverride: string | null = null,
+  hermesToolGateways: string[] = [],
+  slackConfig: LooseObject = {},
 ): void {
   const sanitizedModel = sanitizeDockerArg(model);
   const sandboxInference = getSandboxInferenceConfig(
@@ -230,6 +232,22 @@ export function patchStagedDockerfile(
     dockerfile = dockerfile.replace(
       /^ARG NEMOCLAW_WECHAT_CONFIG_B64=.*$/m,
       `ARG NEMOCLAW_WECHAT_CONFIG_B64=${encodeSanitizedDockerJsonArg(wechatConfig)}`,
+    );
+  }
+  if (slackConfig && Object.keys(slackConfig).length > 0) {
+    dockerfile = dockerfile.replace(
+      /^ARG NEMOCLAW_SLACK_CONFIG_B64=.*$/m,
+      `ARG NEMOCLAW_SLACK_CONFIG_B64=${encodeSanitizedDockerJsonArg(slackConfig)}`,
+    );
+  }
+  if (hermesToolGateways.length > 0) {
+    dockerfile = dockerfile.replace(
+      /^ARG NEMOCLAW_HERMES_TOOL_GATEWAY_BROKER=.*$/m,
+      "ARG NEMOCLAW_HERMES_TOOL_GATEWAY_BROKER=1",
+    );
+    dockerfile = dockerfile.replace(
+      /^ARG NEMOCLAW_HERMES_TOOL_GATEWAY_PRESETS_B64=.*$/m,
+      `ARG NEMOCLAW_HERMES_TOOL_GATEWAY_PRESETS_B64=${encodeSanitizedDockerJsonArg(hermesToolGateways)}`,
     );
   }
   fs.writeFileSync(dockerfilePath, dockerfile);

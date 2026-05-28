@@ -1,6 +1,6 @@
 <!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
 <!-- SPDX-License-Identifier: Apache-2.0 -->
-# NemoClaw Prerequisites
+# Prerequisites
 
 Before getting started, check the prerequisites to ensure you have the necessary software and hardware to run NemoClaw.
 
@@ -26,6 +26,13 @@ The sandbox image is approximately 2.4 GB compressed. During image push, the Doc
 On Linux, the installer can install Docker, start the Docker service, and add your user to the `docker` group.
 If the group change is not active in the current shell, the installer exits with `newgrp docker` guidance before it starts onboarding.
 If you choose the native Linux Ollama install path, the onboard wizard also requires `zstd` for Ollama archive extraction.
+
+**Docker group access:**
+
+NemoClaw needs Docker access.
+On personal Linux development machines, adding your user to the `docker` group is the standard way to run Docker without sudo.
+Members of the `docker` group can control the daemon with root-level impact, so grant this access only to trusted local accounts; on shared or managed systems, use your organization's approved Docker access path.
+For background, review Docker's [daemon attack surface guidance](https://docs.docker.com/engine/security/#docker-daemon-attack-surface).
 
 On Debian and Ubuntu, NemoClaw installs `zstd` with `apt-get` if it is missing; on other Linux distributions, install `zstd` before onboarding.
 
@@ -58,5 +65,5 @@ The table is generated from [`ci/platform-matrix.json`](https://github.com/NVIDI
 
 ## Next Steps
 
-- Prepare Windows for NemoClaw (use the `nemoclaw-user-get-started` skill) if you are using Windows.
-- Quickstart (use the `nemoclaw-user-get-started` skill) to install NemoClaw and launch your first sandbox.
+- [Prepare Windows for NemoClaw](windows-preparation.md) if you are using Windows.
+- [Quickstart](../SKILL.md) to install NemoClaw and launch your first sandbox.

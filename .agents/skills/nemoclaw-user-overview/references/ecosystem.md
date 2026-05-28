@@ -1,6 +1,6 @@
 <!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
 <!-- SPDX-License-Identifier: Apache-2.0 -->
-# NemoClaw Ecosystem: Stack, Placement, and When to Use NemoClaw or OpenShell
+# Ecosystem
 
 NemoClaw provides onboarding, lifecycle management, and OpenClaw operations within OpenShell containers.
 
@@ -89,6 +89,6 @@ Use the following table to decide when to use NemoClaw versus OpenShell.
 
 ## Related topics
 
-- Overview (use the `nemoclaw-user-overview` skill) contains what NemoClaw is, capabilities, benefits, and use cases.
-- How It Works (use the `nemoclaw-user-overview` skill) describes how NemoClaw runs, plugin, blueprint, sandbox creation, routing, protection layers.
+- [Overview](overview.md) contains what NemoClaw is, capabilities, benefits, and use cases.
+- [How It Works](how-it-works.md) describes how NemoClaw runs, plugin, blueprint, sandbox creation, routing, protection layers.
 - Architecture (use the `nemoclaw-user-reference` skill) shows the repository structure and technical diagrams.

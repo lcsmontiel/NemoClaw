@@ -1,6 +1,6 @@
 <!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
 <!-- SPDX-License-Identifier: Apache-2.0 -->
-# Set up a Task-Specific Sub-Agent
+# Set Up Task-Specific Sub-Agents
 
 OpenClaw documents the sub-agent behavior, `sessions_spawn` tool, `agents.list` configuration, tool policy, nesting, and auth model in [Sub-Agents](https://docs.openclaw.ai/tools/subagents).
 Use that page as the source of truth for how OpenClaw sub-agents work.
@@ -116,5 +116,5 @@ Use the [`vlm-demo`](https://github.com/brevdev/nemoclaw-demos/tree/main/vlm-dem
 Use the following resources for more information:
 
 - Refer to [OpenClaw Sub-Agents](https://docs.openclaw.ai/tools/subagents) for `sessions_spawn`, `agents.list`, nesting, tool policy, and auth behavior.
-- Refer to Switch Inference Providers (use the `nemoclaw-user-configure-inference` skill) to change the primary orchestration model instead of adding a sub-agent model.
+- Refer to [Switch Inference Providers](switch-inference-providers.md) to change the primary orchestration model instead of adding a sub-agent model.
 - Refer to Workspace Files (use the `nemoclaw-user-manage-sandboxes` skill) to understand per-agent workspace directories.

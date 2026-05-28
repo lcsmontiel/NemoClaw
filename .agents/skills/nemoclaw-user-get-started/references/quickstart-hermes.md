@@ -10,7 +10,7 @@ The `nemohermes` command is an alias for `nemoclaw` with the Hermes agent pre-se
 The Hermes agent option is experimental.
 Interfaces, defaults, and supported features may change without notice, and it is not recommended for production use.
 
-Review the Prerequisites (use the `nemoclaw-user-get-started` skill) before starting.
+Review the [Prerequisites](prerequisites.md) before starting.
 The first Hermes build can take several minutes because NemoClaw builds the Hermes sandbox base image if it is not already cached.
 
 ## Install and Onboard
@@ -44,7 +44,7 @@ Sandbox name [hermes]: my-hermes
 
 Choose the inference provider that matches where you want Hermes model traffic to go.
 The provider options and credential environment variables are the same as the standard NemoClaw quickstart.
-For provider-specific prompts, refer to the Respond to the Onboard Wizard (use the `nemoclaw-user-get-started` skill) section and the Inference Options (use the `nemoclaw-user-configure-inference` skill) page.
+For provider-specific prompts, refer to the [Respond to the Onboard Wizard](../SKILL.md#respond-to-the-onboard-wizard) section and the Inference Options (use the `nemoclaw-user-configure-inference` skill) page.
 The Hermes wizard does not ask for Brave Web Search because Hermes does not use NemoClaw's OpenClaw web-search configuration.
 
 After provider and policy selection, review the summary and confirm the build.
@@ -79,16 +79,27 @@ Hermes exposes an OpenAI-compatible API on port `8642`, not a browser dashboard.
 
 ```text
 ──────────────────────────────────────────────────
-Sandbox      my-hermes (Landlock + seccomp + netns)
-Model        nvidia/nemotron-3-super-120b-a12b (NVIDIA Endpoints)
-──────────────────────────────────────────────────
-Run:         nemohermes my-hermes connect
-Status:      nemohermes my-hermes status
-Logs:        nemohermes my-hermes logs --follow
+NemoHermes is ready
 
-Hermes Agent OpenAI-compatible API
-Port 8642 must be forwarded before connecting.
-http://127.0.0.1:8642/v1
+Sandbox:  my-hermes
+Model:    nvidia/nemotron-3-super-120b-a12b (NVIDIA Endpoints)
+
+Access
+
+  Hermes Agent OpenAI-compatible API
+  Port 8642 must be forwarded before connecting.
+  http://127.0.0.1:8642/v1
+
+Terminal:
+  nemohermes my-hermes connect
+
+Manage later
+
+  Status:      nemohermes my-hermes status
+  Logs:        nemohermes my-hermes logs --follow
+  Model:       nemohermes inference set --model <model> --provider <provider> --sandbox my-hermes
+  Policies:    nemohermes my-hermes policy-add
+  Credentials: nemohermes credentials reset <KEY> && nemohermes onboard
 ──────────────────────────────────────────────────
 ```
 

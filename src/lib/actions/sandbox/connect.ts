@@ -16,6 +16,7 @@ import {
 } from "../../adapters/openshell/timeouts";
 import { CLI_NAME } from "../../cli/branding";
 import { D, G, R, YW } from "../../cli/terminal-style";
+import * as agentRuntime from "../../agent/runtime";
 import { parseGatewayInference } from "../../inference/config";
 import { findReachableOllamaHost, probeLocalProviderHealth } from "../../inference/local";
 import {
@@ -32,15 +33,14 @@ import {
   createSystemDeps as createSessionDeps,
   getActiveSandboxSessions,
 } from "../../state/sandbox-session";
+import { getNamedGatewayLifecycleState } from "../../gateway-runtime-action";
 import { runSetupDnsProxy } from "../dns";
-import { ensureLiveSandboxOrExit } from "./gateway-state";
+import { ensureLiveSandboxOrExit, printGatewayLifecycleHint } from "./gateway-state";
 import { checkAndRecoverSandboxProcesses } from "./process-recovery";
 import {
   applyOpenShellVmDnsMonkeypatch,
   shouldApplyVmDnsMonkeypatch,
 } from "./vm-dns-monkeypatch";
-
-const agentRuntime = require("../../../../bin/lib/agent-runtime");
 
 const NEMOCLAW_GATEWAY_NAME = "nemoclaw";
 
@@ -51,6 +51,11 @@ export type SandboxConnectOptions = {
 type SpawnLikeResult = {
   status: number | null;
   signal?: NodeJS.Signals | null;
+};
+
+type SandboxListProbe = {
+  status: number | null;
+  output: string;
 };
 
 type SandboxInferenceRouteProbe = {
@@ -165,6 +170,51 @@ function sleepSync(ms: number): void {
     stdio: "ignore",
     timeout: ms + 1_000,
   });
+}
+
+const GATEWAY_UNAVAILABLE_RE =
+  /No gateway configured|No active gateway|Connection refused|client error \(Connect\)|tcp connect error|Status:\s*Disconnected/i;
+
+function isBlockingGatewayLifecycle(
+  lifecycle: ReturnType<typeof getNamedGatewayLifecycleState>,
+): boolean {
+  if (lifecycle.state === "named_unreachable" || lifecycle.state === "named_unhealthy") {
+    return true;
+  }
+  return lifecycle.state === "missing_named" && GATEWAY_UNAVAILABLE_RE.test(lifecycle.status || "");
+}
+
+function failConnectReadinessGatewayUnavailable(
+  sandboxName: string,
+  detailOutput = "",
+): never {
+  console.error("");
+  console.error(
+    `  OpenShell gateway is not running or unreachable; cannot verify sandbox '${sandboxName}' readiness.`,
+  );
+  if (detailOutput.trim()) {
+    console.error(detailOutput.trimEnd());
+    printGatewayLifecycleHint(detailOutput, sandboxName, console.error);
+  }
+  console.error("  Recovery:");
+  console.error("    1. Run: openshell gateway start --name nemoclaw");
+  console.error(`    2. If the gateway cannot be restarted, run: ${CLI_NAME} onboard`);
+  console.error(`    3. Retry: ${CLI_NAME} ${sandboxName} connect`);
+  process.exit(1);
+}
+
+function outputShowsGatewayUnavailable(output = ""): boolean {
+  return GATEWAY_UNAVAILABLE_RE.test(output);
+}
+
+function failIfGatewayBlocksConnectReadiness(sandboxName: string): void {
+  const lifecycle = getNamedGatewayLifecycleState();
+  if (isBlockingGatewayLifecycle(lifecycle)) {
+    failConnectReadinessGatewayUnavailable(
+      sandboxName,
+      lifecycle.status || lifecycle.gatewayInfo || "",
+    );
+  }
 }
 
 function probeSandboxInferenceRoute(
@@ -555,6 +605,122 @@ function ensureSandboxInferenceRouteOrExit(
   return result.sandbox;
 }
 
+// One-shot, defense-in-depth approval pass for late OpenClaw CLI/webchat
+// scope upgrades (NemoClaw#4263). The in-sandbox auto-pair watcher keeps
+// approving allowlisted requests in slow-mode for hours after startup; this
+// pass covers the case where the watcher has exited or is otherwise stuck
+// when the user runs `nemoclaw <sandbox> connect`. The script sources
+// `/tmp/nemoclaw-proxy-env.sh` (written by `nemoclaw-start.sh`) so the
+// in-sandbox `openclaw devices list/approve` invocations target the
+// running gateway with its token, and applies the same allowlist as the
+// startup watcher — `openclaw-control-ui` clients plus `webchat`/`cli`
+// modes. Unknown clients are ignored, not approved.
+//
+// Failure modes (timeout, sandbox-exec errors, missing openclaw, gateway
+// unreachable) are swallowed: the connect flow must not be blocked by a
+// best-effort approval. Internal timeouts (2s list + 1s × MAX_APPROVALS)
+// fit within the outer spawnSync cap, so a partial-completion mid-loop
+// kill cannot strand allowlisted requests within a normal batch.
+const CONNECT_AUTO_PAIR_MAX_APPROVALS = 8;
+const CONNECT_AUTO_PAIR_TIMEOUT_MS = 12_000;
+
+function runConnectAutoPairApprovalPass(sandboxName: string): void {
+  const script = `
+PROXY_ENV=/tmp/nemoclaw-proxy-env.sh
+[ -r "$PROXY_ENV" ] && . "$PROXY_ENV"
+command -v openclaw >/dev/null 2>&1 || exit 0
+command -v python3 >/dev/null 2>&1 || exit 0
+OPENCLAW_BIN="$(command -v openclaw)" python3 - <<'PYAPPROVE'
+import json
+import os
+import subprocess
+import sys
+
+OPENCLAW = os.environ.get('OPENCLAW_BIN', 'openclaw')
+ALLOWED_CLIENTS = {'openclaw-control-ui'}
+ALLOWED_MODES = {'webchat', 'cli'}
+MAX_APPROVALS = ${CONNECT_AUTO_PAIR_MAX_APPROVALS}
+
+try:
+    proc = subprocess.run(
+        [OPENCLAW, 'devices', 'list', '--json'],
+        capture_output=True, text=True, timeout=2,
+    )
+except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
+    sys.exit(0)
+if proc.returncode != 0 or not proc.stdout.strip():
+    sys.exit(0)
+try:
+    data = json.loads(proc.stdout)
+except ValueError:
+    sys.exit(0)
+if not isinstance(data, dict):
+    sys.exit(0)
+pending = data.get('pending')
+if not isinstance(pending, list):
+    sys.exit(0)
+approved_count = 0
+seen_request_ids = set()
+for device in pending:
+    if approved_count >= MAX_APPROVALS:
+        break
+    if not isinstance(device, dict):
+        continue
+    request_id = device.get('requestId')
+    if not request_id or request_id in seen_request_ids:
+        continue
+    client_id = device.get('clientId', '')
+    client_mode = device.get('clientMode', '')
+    if client_id not in ALLOWED_CLIENTS and client_mode not in ALLOWED_MODES:
+        continue
+    seen_request_ids.add(request_id)
+    try:
+        subprocess.run(
+            [OPENCLAW, 'devices', 'approve', request_id, '--json'],
+            capture_output=True, text=True, timeout=1,
+        )
+        approved_count += 1
+    except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
+        continue
+PYAPPROVE
+exit 0
+`;
+  try {
+    // Best-effort: discard stdout/stderr. Outer cap is sized to cover the
+    // internal budget (2s list + 1s × MAX_APPROVALS plus shell/python
+    // startup slack) so a wedged sandbox can never block the connect flow.
+    spawnSync(
+      getOpenshellBinary(),
+      ["sandbox", "exec", "--name", sandboxName, "--", "sh", "-c", script],
+      {
+        cwd: ROOT,
+        env: process.env,
+        stdio: ["ignore", "ignore", "ignore"],
+        timeout: CONNECT_AUTO_PAIR_TIMEOUT_MS,
+      },
+    );
+  } catch {
+    /* defense-in-depth — never throw from the connect path */
+  }
+}
+
+function maybeEnsureHermesToolGatewayBroker(sb: SandboxEntry | null): void {
+  if (
+    !sb ||
+    sb.agent !== "hermes" ||
+    !Array.isArray(sb.hermesToolGateways) ||
+    sb.hermesToolGateways.length === 0
+  ) {
+    return;
+  }
+  try {
+    const hermesToolGatewayBroker = require("../../hermes-tool-gateway-broker");
+    hermesToolGatewayBroker.ensureHermesToolGatewayBrokerForSandboxEntry(sb);
+  } catch {
+    /* non-fatal — managed-tool calls will surface broker guidance if needed */
+  }
+}
+
 function exitWithSpawnResult(result: SpawnLikeResult): void {
   if (result.status !== null) {
     process.exit(result.status);
@@ -630,15 +796,27 @@ export async function connectSandbox(
   const deadline = startedAt + timeout * 1000;
   const elapsedSec = () => Math.floor((Date.now() - startedAt) / 1000);
   const remainingMs = () => Math.max(1, deadline - Date.now());
-  const runSandboxList = () =>
-    captureOpenshell(["sandbox", "list"], {
+  const runSandboxList = (): SandboxListProbe => {
+    const result = captureOpenshell(["sandbox", "list"], {
       ignoreError: true,
       timeout: remainingMs(),
-    }).output;
+    });
+    return { status: result.status, output: result.output };
+  };
 
-  const list = runSandboxList();
+  const listProbe = runSandboxList();
+  const listCommandFailed = listProbe.status !== 0;
+  if (listCommandFailed) {
+    if (outputShowsGatewayUnavailable(listProbe.output)) {
+      failConnectReadinessGatewayUnavailable(sandboxName, listProbe.output);
+    }
+  }
+  const list = listProbe.output;
   if (!isSandboxReady(list, sandboxName)) {
     const status = parseSandboxStatus(list, sandboxName);
+    if (!listCommandFailed && status && /^unknown$/i.test(status)) {
+      failIfGatewayBlocksConnectReadiness(sandboxName);
+    }
     const TERMINAL = new Set([
       "Failed",
       "Error",
@@ -662,13 +840,24 @@ export async function connectSandbox(
       const sleepFor = Math.min(interval, remainingMs() / 1000);
       if (sleepFor <= 0) break;
       spawnSync("sleep", [String(sleepFor)]);
-      const poll = runSandboxList();
+      const pollProbe = runSandboxList();
+      const pollCommandFailed = pollProbe.status !== 0;
+      if (pollCommandFailed) {
+        if (outputShowsGatewayUnavailable(pollProbe.output)) {
+          failConnectReadinessGatewayUnavailable(sandboxName, pollProbe.output);
+        }
+      }
+      const poll = pollProbe.output;
       const elapsed = elapsedSec();
       if (isSandboxReady(poll, sandboxName)) {
         ready = true;
         break;
       }
-      const cur = parseSandboxStatus(poll, sandboxName) || "unknown";
+      const parsedCur = parseSandboxStatus(poll, sandboxName);
+      const cur = parsedCur || "unknown";
+      if (!pollCommandFailed && parsedCur && /^unknown$/i.test(parsedCur)) {
+        failIfGatewayBlocksConnectReadiness(sandboxName);
+      }
       if (cur !== "unknown") everSeen = true;
       if (TERMINAL.has(cur)) {
         console.error("");
@@ -704,6 +893,15 @@ export async function connectSandbox(
   // cluster-wide inference.local route may still point at the other provider.
   // After the sandbox is Ready, verify and recover the route before SSH.
   sb = ensureSandboxInferenceRouteOrExit(sandboxName);
+  maybeEnsureHermesToolGatewayBroker(sb);
+
+  // ── Auto-pair late scope-upgrade approval (#4263) ───────────────
+  // Defense in depth: even with the in-sandbox watcher running in
+  // slow-mode keepalive, a brief approval pass before opening SSH
+  // catches any pending allowlisted CLI/webchat scope upgrades that
+  // piled up between startup and now (e.g., watcher crashed, watcher
+  // deadline exhausted, multi-sandbox gateway contention).
+  runConnectAutoPairApprovalPass(sandboxName);
 
   // Print a one-shot hint before dropping the user into the sandbox
   // shell so a fresh user knows the first thing to type. Without this,

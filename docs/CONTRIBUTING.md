@@ -1,3 +1,8 @@
+<!--
+  SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+  SPDX-License-Identifier: Apache-2.0
+-->
+
 # Contributing to NemoClaw Documentation
 
 This guide covers how to write, edit, and review documentation for NemoClaw. If you change code that affects user-facing behavior, update the relevant docs in the same PR.
@@ -20,7 +25,7 @@ Use it before writing from scratch.
 The skill scans recent commits for user-facing changes and drafts doc updates.
 Run it after landing features, before a release, or to find doc gaps.
 For example, ask your agent to "catch up the docs for the changes I made in this PR".
-During release prep, run the skill first, make doc version bumps, regenerate user skills, then open the docs refresh PR.
+During release prep, run the skill first, regenerate user skills, then open the docs refresh PR.
 
 The skill lives in `.agents/skills/nemoclaw-contributor-update-docs/` and follows the style guide below automatically.
 
@@ -61,9 +66,8 @@ NemoClaw maintainers refresh the generated user skills once per release during r
 For daily release prep, the NemoClaw maintainers use this sequence:
 
 1. Run the `nemoclaw-contributor-update-docs` skill for the day's release prep.
-2. Make doc version bumps by updating `versions1.json` and `project.json` in the `docs/` directory.
-3. Run `python scripts/docs-to-skills.py docs/ .agents/skills/ --prefix nemoclaw-user --doc-platform fern-mdx`.
-4. Create the PR with both docs and generated user skills.
+2. Run `python scripts/docs-to-skills.py docs/ .agents/skills/ --prefix nemoclaw-user --doc-platform fern-mdx`.
+3. Create the PR with both docs and generated user skills.
 
 To regenerate skills manually during release prep, run from the repo root:
 
@@ -103,17 +107,35 @@ For full usage details and all flags, see the docstring at the top of `scripts/d
 
 Verify the docs are built correctly by building them and checking the output.
 
-The public site is built with Fern. To validate the Fern configuration and migrated MDX pages, run:
+The public site is built with Fern.
+The repo pins the Fern CLI version in `fern/fern.config.json`.
+Use the npm scripts so every docs command uses that pinned version.
 
-```console
-$ make docs
+To print the pinned Fern CLI version, run:
+
+```bash
+npm run docs:deps
+```
+
+To validate the Fern configuration and migrated MDX pages, run:
+
+```bash
+npm run docs
 ```
 
 To serve the docs locally and automatically rebuild on changes, run:
 
-```console
-$ make docs-live
+```bash
+npm run docs:live
 ```
+
+To publish a branch-based Fern preview whenever docs files change, run:
+
+```bash
+npm run docs:preview:watch
+```
+
+The preview watcher uses the current Git branch name as the Fern preview ID and watches the `docs/` and `fern/` directories.
 
 Fern `.mdx` pages are the source for generated user skills. Legacy `.md` pages may remain temporarily for parity checks, but release-prep skill generation should pass `--doc-platform fern-mdx`.
 
@@ -122,9 +144,9 @@ Fern `.mdx` pages are the source for generated user skills. Legacy `.md` pages m
 Doc-only pull requests do not need the full test suite by default.
 Before opening a doc-only PR, run:
 
-```console
-$ npx prek run --all-files
-$ make docs
+```bash
+npx prek run --all-files
+npm run docs
 ```
 
 Leave `npm test` unchecked in the PR verification checklist unless you actually ran it.
@@ -229,11 +251,17 @@ These patterns are common in LLM-generated text and erode trust with technical r
 - End every sentence with a period.
 - One sentence per line in the source file (makes diffs readable).
 - Use `code` formatting for CLI commands, file paths, flags, parameter names, and values.
-- Use code blocks with the `console` language for CLI examples. Prefix commands with `$`:
+- Use language-specific code blocks for commands that readers should copy.
+  Put only the command text in copyable blocks:
 
-  ```console
-  $ nemoclaw onboard
+  ```bash
+  nemoclaw onboard
   ```
+
+- Use `powershell` for Windows PowerShell commands.
+  Use `bash` or `sh` for Linux, macOS, and WSL shell commands.
+  Reserve `console` blocks for terminal transcripts that include prompts, output, or interactive sessions.
+  Do not use prompt markers such as `$` in copyable command blocks.
 
 - Use tables for structured comparisons. Keep tables simple (no nested formatting).
 - Use Fern callout components (`<Note>`, `<Tip>`, `<Warning>`) for callouts in MDX pages, not bold text.
@@ -264,7 +292,7 @@ Use these consistently:
 
 1. Create a branch following the project convention.
 2. Make your changes.
-3. Build locally with `make docs` and verify the output.
+3. Build locally with `npm run docs` and verify the output.
 4. Open a PR with `docs:` as the conventional commit type.
 
 ```text

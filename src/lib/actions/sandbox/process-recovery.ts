@@ -6,22 +6,22 @@ import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { DASHBOARD_PORT } from "../../core/ports";
-import { ROOT, shellQuote } from "../../runner";
 import {
   captureOpenshell,
   captureOpenshellForStatus,
+  captureSandboxSshConfig,
   getOpenshellBinary,
   isCommandTimeout,
   runOpenshell,
 } from "../../adapters/openshell/runtime";
 import { OPENSHELL_PROBE_TIMEOUT_MS } from "../../adapters/openshell/timeouts";
+import * as agentRuntime from "../../agent/runtime";
+import { G, R } from "../../cli/terminal-style";
+import { DASHBOARD_PORT } from "../../core/ports";
+import { sleepSeconds } from "../../core/wait";
+import { ROOT, shellQuote } from "../../runner";
 import * as registry from "../../state/registry";
 import { parseForwardList } from "../../state/sandbox-session";
-import { G, R } from "../../cli/terminal-style";
-import { sleepSeconds } from "../../core/wait";
-
-const agentRuntime = require("../../../../bin/lib/agent-runtime");
 
 export type SandboxCommandResult = {
   status: number;
@@ -29,9 +29,11 @@ export type SandboxCommandResult = {
   stderr: string;
 };
 
+type SandboxPortAgent = { forwardPort?: unknown } | null;
+
 type SandboxPortDeps = {
   getSandbox?: typeof registry.getSandbox;
-  getSessionAgent?: typeof agentRuntime.getSessionAgent;
+  getSessionAgent?: (sandboxName?: string) => SandboxPortAgent;
 };
 
 export type SandboxForwardListEntry = {
@@ -82,7 +84,7 @@ export function executeSandboxCommand(
   sandboxName: string,
   command: string,
 ): SandboxCommandResult | null {
-  const sshConfigResult = captureOpenshell(["sandbox", "ssh-config", sandboxName], {
+  const sshConfigResult = captureSandboxSshConfig(sandboxName, {
     ignoreError: true,
     timeout: OPENSHELL_PROBE_TIMEOUT_MS,
   });
@@ -337,7 +339,7 @@ function ensureSandboxPortForward(sandboxName: string): boolean {
   if (forwardHealth === "occupied") return false;
 
   const port = String(resolveSandboxDashboardPort(sandboxName));
-  runOpenshell(["forward", "stop", port], { ignoreError: true });
+  runOpenshell(["forward", "stop", port], { ignoreError: true, stdio: "ignore" });
   const startResult = runOpenshell(["forward", "start", "--background", port, sandboxName], {
     ignoreError: true,
   });

@@ -46,6 +46,14 @@ $ nemoclaw my-assistant snapshot restore before-upgrade
 $ nemoclaw my-assistant snapshot restore 2026-04-14T
 ```
 
+To clone a snapshot into a different sandbox name, pass `--to <name>`.
+If the destination sandbox already exists, NemoClaw refuses to overwrite it unless you pass `--force`:
+
+```console
+$ nemoclaw my-assistant snapshot restore before-upgrade --to my-assistant-clone
+$ nemoclaw my-assistant snapshot restore before-upgrade --to my-assistant-clone --force --yes
+```
+
 The `nemoclaw <name> rebuild` command uses the same snapshot mechanism automatically.
 Snapshot restore performs a targeted repair for legacy `.openclaw-data` symlinks that were created by older images.
 Unsafe symlinks and hard links inside sandbox state are rejected during backup creation before they can enter a snapshot.
@@ -132,7 +140,7 @@ memory/
 
 When OpenClaw is configured with multiple named agents, each agent has its own
 workspace directory (`workspace-main/`, `workspace-support/`, `workspace-ops/`,
-and so on — see Multi-Agent Deployments (use the `nemoclaw-user-manage-sandboxes` skill)).
+and so on — see [Multi-Agent Deployments](workspace-files.md#multi-agent-deployments)).
 
 `nemoclaw <name> snapshot create` automatically discovers every `workspace-*/`
 directory under the sandbox state tree and includes it in the snapshot bundle
@@ -154,5 +162,5 @@ editing, or maintain a host-side sync layer. Tracking shared-file tooling
 
 ## Next Steps
 
-- Workspace Files overview (use the `nemoclaw-user-manage-sandboxes` skill) to learn what each file does
+- [Workspace Files overview](workspace-files.md) to learn what each file does
 - Commands reference (use the `nemoclaw-user-reference` skill)
