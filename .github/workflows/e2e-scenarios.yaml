@@ -33,7 +33,7 @@ jobs:
     outputs:
       runner: ${{ steps.pick.outputs.runner }}
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
           persist-credentials: false
 
@@ -60,12 +60,16 @@ jobs:
             [wsl-repo-cloud-openclaw]=windows-latest
             [gpu-repo-local-ollama-openclaw]=linux-amd64-gpu-rtxpro6000-latest-1
             [brev-launchable-cloud-openclaw]=ubuntu-latest
+            [ubuntu-gateway-port-conflict-negative]=ubuntu-latest
+            [ubuntu-invalid-nvidia-key-negative]=ubuntu-latest
             [ubuntu-no-docker-preflight-negative]=ubuntu-latest
+            [ubuntu-rebuild-openclaw]=ubuntu-latest
             [ubuntu-repo-cloud-hermes]=ubuntu-latest
             [ubuntu-repo-cloud-hermes-discord]=ubuntu-latest
             [ubuntu-repo-cloud-hermes-slack]=ubuntu-latest
             [ubuntu-repo-cloud-openclaw]=ubuntu-latest
             [ubuntu-repo-cloud-openclaw-brave]=ubuntu-latest
+            [ubuntu-repo-cloud-openclaw-custom-policies]=ubuntu-latest
             [ubuntu-repo-cloud-openclaw-discord]=ubuntu-latest
             [ubuntu-repo-cloud-openclaw-double-provider-switch]=ubuntu-latest
             [ubuntu-repo-cloud-openclaw-double-same-provider]=ubuntu-latest
@@ -81,7 +85,6 @@ jobs:
           for raw in "${IDS[@]}"; do
             id="${raw//[[:space:]]/}"
             [ -n "${id}" ] || continue
-            npx tsx test/e2e-scenario/scenarios/run.ts --scenarios "${id}" --plan-only >/dev/null
             runner="${ROUTES[$id]:-}"
             if [ -z "${runner}" ]; then
               echo "::error::No runner route for scenario: ${id}" >&2
@@ -109,7 +112,7 @@ jobs:
         shell: powershell
         run: git config --global core.autocrlf false
 
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
           persist-credentials: false
 
@@ -135,7 +138,7 @@ jobs:
             echo "::error::Invalid scenario input: ${SCENARIOS}" >&2
             exit 1
           fi
-          npx tsx test/e2e-scenario/scenarios/run.ts --scenarios "${SCENARIOS}" --dry-run
+          npx tsx test/e2e-scenario/scenarios/run.ts --scenarios "${SCENARIOS}"
 
       - name: Resolve workspace paths for WSL
         if: contains(inputs.scenarios || github.event.inputs.scenarios, 'wsl-repo-cloud-openclaw')
@@ -299,7 +302,7 @@ jobs:
           export E2E_CONTEXT_DIR="`$workdir"
           npm ci --ignore-scripts
           set +e
-          npx tsx test/e2e-scenario/scenarios/run.ts --scenarios "`$scenarios" --dry-run
+          npx tsx test/e2e-scenario/scenarios/run.ts --scenarios "`$scenarios"
           status=`$?
           if [ -d "`$workdir/.e2e" ]; then
             rm -rf "`$checkout_dir/.e2e"
@@ -321,28 +324,69 @@ jobs:
             exit $LASTEXITCODE
           }
 
-      - name: Append plan summary
+      - name: Append typed scenario summary
         if: always()
         shell: bash
         run: |
-          if [ -f .e2e/plan.txt ]; then
-            echo '## E2E scenario plan' >> "$GITHUB_STEP_SUMMARY"
-            cat .e2e/plan.txt >> "$GITHUB_STEP_SUMMARY"
-          fi
+          {
+            echo '## E2E typed scenario run'
+            echo ''
+            echo 'Mode: `test/e2e-scenario/scenarios/run.ts --scenarios <id[,id...]>` (live).'
+            echo ''
+            if [ -f .e2e/run-plan.json ]; then
+              python3 - <<'PY'
+          import json
+          from pathlib import Path
+
+          plans = json.loads(Path('.e2e/run-plan.json').read_text(encoding='utf-8'))
+          print('| Scenario | Manifest | Expected state | Suites | Phases |')
+          print('| --- | --- | --- | --- | --- |')
+          for plan in plans:
+              suites = ', '.join(f"`{suite}`" for suite in plan.get('suiteIds', [])) or '_none_'
+              phases = ', '.join(f"`{phase.get('name')}`" for phase in plan.get('phases', [])) or '_none_'
+              print(
+                  '| `{scenario}` | `{manifest}` | `{state}` | {suites} | {phases} |'.format(
+                      scenario=plan.get('scenarioId', ''),
+                      manifest=plan.get('manifestPath') or '_none_',
+                      state=plan.get('expectedStateId') or '_none_',
+                      suites=suites,
+                      phases=phases,
+                  )
+              )
+          PY
+            elif [ -f .e2e/plan.txt ]; then
+              echo '```text'
+              cat .e2e/plan.txt
+              echo '```'
+            else
+              echo '_No typed scenario plan artifact was produced._'
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload scenario artifacts
         if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: e2e-scenario-${{ inputs.scenarios || github.event.inputs.scenarios }}
+          # Explicit subpath list, NOT a blanket .e2e/ + hidden files.
+          # The framework redacts every byte that flows from spawned
+          # children into actions/*.log, logs/*.log, and onboard.log via
+          # orchestrators/redaction.ts::pipeRedacted. Anything outside
+          # the listed paths (notably the raw context.env file) is
+          # excluded so secret-bearing key=value lines cannot leak via
+          # the artifact even if a future helper writes there.
+          # Diagnostic dumps of context use e2e_context_dump, which
+          # redacts on emit (runtime/lib/context.sh).
           path: |
             .e2e/run-plan.json
             .e2e/plan.txt
             .e2e/environment.result.json
             .e2e/onboarding.result.json
             .e2e/runtime.result.json
-            .e2e/
+            .e2e/actions/
+            .e2e/logs/
+            .e2e/onboard.log
             test/e2e/logs/
           if-no-files-found: warn
           retention-days: 14
-          include-hidden-files: true
+          include-hidden-files: false

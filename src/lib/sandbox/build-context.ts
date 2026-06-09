@@ -128,10 +128,18 @@ function stageOptimizedSandboxBuildContext(
     path.join(rootDir, "scripts", "lib", "sandbox-init.sh"),
     path.join(stagedScriptsDir, "lib", "sandbox-init.sh"),
   );
+  fs.copyFileSync(
+    path.join(rootDir, "scripts", "lib", "openclaw_device_approval_policy.py"),
+    path.join(stagedScriptsDir, "lib", "openclaw_device_approval_policy.py"),
+  );
+  fs.copyFileSync(
+    path.join(rootDir, "scripts", "lib", "clean_runtime_shell_env_shim.py"),
+    path.join(stagedScriptsDir, "lib", "clean_runtime_shell_env_shim.py"),
+  );
   // OpenClaw config generator extracted in #2449 (fixed in #2565)
   fs.copyFileSync(
-    path.join(rootDir, "scripts", "generate-openclaw-config.py"),
-    path.join(stagedScriptsDir, "generate-openclaw-config.py"),
+    path.join(rootDir, "scripts", "generate-openclaw-config.mts"),
+    path.join(stagedScriptsDir, "generate-openclaw-config.mts"),
   );
   fs.copyFileSync(
     path.join(rootDir, "scripts", "openclaw-build-messaging-plugins.py"),
@@ -151,6 +159,10 @@ function stageOptimizedSandboxBuildContext(
   fs.copyFileSync(
     path.join(rootDir, "scripts", "patch-openclaw-chat-send.js"),
     path.join(stagedScriptsDir, "patch-openclaw-chat-send.js"),
+  );
+  fs.copyFileSync(
+    path.join(rootDir, "scripts", "patch-openclaw-slack-deny-feedback.mts"),
+    path.join(stagedScriptsDir, "patch-openclaw-slack-deny-feedback.mts"),
   );
 
   return { buildCtx, stagedDockerfile };
